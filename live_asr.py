@@ -1,7 +1,3 @@
-# 必须放在所有 import 之前！
-import eventlet
-eventlet.monkey_patch()
-
 import os
 import sys
 import time
@@ -9,6 +5,8 @@ import json
 import wave
 import struct
 import math
+import csv
+import shutil
 import tempfile
 import subprocess
 import threading
@@ -99,9 +97,10 @@ DEFAULT_CONFIG = {
 app = Flask(__name__)
 # ⚠️ 公网部署前请务必修改此密钥！建议使用随机生成的强密码
 app.config['SECRET_KEY'] = os.environ.get('FLASK_SECRET_KEY', 'default_secret_key_change_me_immediately')
-socketio = SocketIO(app, cors_allowed_origins="*", async_mode='eventlet')
+socketio = SocketIO(app, cors_allowed_origins="*", async_mode='threading')
 
 history_buffer: List[Dict[str, Any]] = []
+history_lock = threading.Lock()  # 线程安全锁
 log_buffer = collections.deque(maxlen=200) # 内存日志缓冲
 config: Dict[str, Any] = DEFAULT_CONFIG.copy()
 
@@ -114,6 +113,40 @@ qwen_asr_results_buffer = []  # Qwen ASR 结果缓冲区
 
 # 翻译上下文缓冲区
 translation_context_buffer = collections.deque(maxlen=20)  # 保留最近20句的上下文
+
+# ================ 自动保存 ================
+AUTO_SAVE_DIR = os.path.join(current_dir, "output")
+os.makedirs(AUTO_SAVE_DIR, exist_ok=True)
+
+def auto_save_record(orig: str, tran: str, ts: float):
+    """自动追加保存一条记录到 CSV 和 JSON 文件"""
+    try:
+        date_str = time.strftime("%Y-%m-%d", time.localtime(ts))
+        time_str = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(ts))
+
+        # 写 CSV
+        csv_path = os.path.join(AUTO_SAVE_DIR, f"{date_str}.csv")
+        write_header = not os.path.exists(csv_path)
+        with open(csv_path, "a", newline="", encoding="utf-8-sig") as f:
+            writer = csv.writer(f)
+            if write_header:
+                writer.writerow(["时间", "原文", "译文"])
+            writer.writerow([time_str, orig, tran])
+
+        # 写 JSON（追加到数组）
+        json_path = os.path.join(AUTO_SAVE_DIR, f"{date_str}.json")
+        records = []
+        if os.path.exists(json_path):
+            try:
+                with open(json_path, "r", encoding="utf-8") as f:
+                    records = json.load(f)
+            except (json.JSONDecodeError, ValueError):
+                records = []
+        records.append({"time": time_str, "ts": ts, "orig": orig, "tran": tran})
+        with open(json_path, "w", encoding="utf-8") as f:
+            json.dump(records, f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        log("Save", f"自动保存失败: {e}")
 
 # ================ 安全防护 ================
 login_attempts = {}  # IP -> 尝试次数
@@ -641,11 +674,15 @@ def translate_and_emit_async(texts: List[str], timestamp: float):
         trans = translate_batch(texts)
         for i, orig in enumerate(texts):
             tran = trans[i] if i < len(trans) else ""
-            new_item = {"ts": timestamp + i*0.01, "orig": orig, "tran": tran}
-            history_buffer.append(new_item)
+            ts = timestamp + i*0.01
+            new_item = {"ts": ts, "orig": orig, "tran": tran}
+            with history_lock:
+                history_buffer.append(new_item)
+                if len(history_buffer) > 50:
+                    history_buffer[:] = history_buffer[-50:]
             socketio.emit('new_message', new_item)
-        if len(history_buffer) > 50:
-            history_buffer[:] = history_buffer[-50:]
+            # 自动保存到本地文件
+            auto_save_record(orig, tran, ts)
     except Exception as e:
         log("Error", f"异步翻译出错: {e}")
 
@@ -702,8 +739,7 @@ def worker_loop():
     log("Core", "工作线程启动")
     
     # 添加启动延迟，确保主线程完全启动
-    import eventlet
-    eventlet.sleep(0.5)
+    time.sleep(0.5)
     log("Core", "工作线程初始化开始")
     
     try:
@@ -778,19 +814,19 @@ def worker_loop():
     while True:
         if not is_running:
             # 如果停止运行，等待但不停止 ASR 服务（保持连接）
-            eventlet.sleep(1)
+            time.sleep(1)
             continue
 
         stream_url = get_stream_url()
         if not stream_url:
             log("Core", "无法获取流，等待重试...")
-            eventlet.sleep(5)
+            time.sleep(5)
             continue
 
         log("Core", "流已连接，开始监听...")
         if not os.path.exists(FFMPEG_EXE):
             log("Error", f"未找到 FFmpeg")
-            eventlet.sleep(5)
+            time.sleep(5)
             continue
 
         # 如果使用 Qwen ASR，检查服务状态并尝试重新初始化
@@ -801,7 +837,7 @@ def worker_loop():
                     log("Info", "Qwen ASR 重新初始化成功")
                 else:
                     log("Error", "Qwen ASR 重新初始化失败，跳过此次流处理")
-                    eventlet.sleep(5)
+                    time.sleep(5)
                     continue
 
         # 启动 FFmpeg (S16LE, 16k, Mono)
@@ -914,7 +950,7 @@ def worker_loop():
                             silence_counter = 0
                             ring_buffer.clear()
 
-                    eventlet.sleep(0.001)
+                    time.sleep(0.001)
             
             else:
                 # === 无 VAD 模式：完全依赖 Qwen ASR 断句 ===
@@ -956,7 +992,7 @@ def worker_loop():
                         
                         last_result_time = current_time
 
-                    eventlet.sleep(0.001)
+                    time.sleep(0.001)
                     
         except Exception as e:
             log("Error", f"Processing Loop Error: {e}")
@@ -1077,7 +1113,8 @@ def latest():
     # 权限检查
     if not session.get('logged_in'):
         return jsonify({"ok": False, "error": "未授权"}), 403
-    return jsonify(history_buffer)
+    with history_lock:
+        return jsonify(list(history_buffer))
 
 @app.route("/status")
 def status(): 
@@ -1090,6 +1127,25 @@ def get_logs():
     if not session.get('logged_in'):
         return jsonify({"ok": False, "error": "未授权"}), 403
     return jsonify({"logs": list(log_buffer)})
+
+@app.route("/export/<fmt>")
+def export_file(fmt):
+    """下载当天的 CSV 或 JSON 导出文件"""
+    if not session.get('logged_in'):
+        return jsonify({"ok": False, "error": "未授权"}), 403
+    date_str = request.args.get('date', time.strftime('%Y-%m-%d'))
+    # 防止路径遍历
+    if '..' in date_str or '/' in date_str or '\\' in date_str:
+        return jsonify({"ok": False, "error": "非法日期"}), 400
+    if fmt == 'csv':
+        filepath = os.path.join(AUTO_SAVE_DIR, f"{date_str}.csv")
+    elif fmt == 'json':
+        filepath = os.path.join(AUTO_SAVE_DIR, f"{date_str}.json")
+    else:
+        return jsonify({"ok": False, "error": "不支持的格式"}), 400
+    if not os.path.exists(filepath):
+        return jsonify({"ok": False, "error": f"没有 {date_str} 的记录"}), 404
+    return send_from_directory(AUTO_SAVE_DIR, os.path.basename(filepath), as_attachment=True)
 
 @app.route("/toggle_run", methods=["POST"])
 def toggle_run():
@@ -1236,7 +1292,6 @@ def system_update():
     try:
         # 备份当前文件
         if os.path.exists(target_file):
-            import shutil
             shutil.copy2(target_file, backup_file)
             log("Update", f"已备份当前文件到: {backup_file}")
         
@@ -1260,7 +1315,6 @@ def system_update():
         # 如果保存失败，尝试恢复备份
         if os.path.exists(backup_file) and not os.path.exists(target_file):
             try:
-                import shutil
                 shutil.copy2(backup_file, target_file)
                 log("Update", "已从备份恢复文件")
             except:
@@ -1380,7 +1434,11 @@ INDEX_HTML = """
 <body>
     <div class="navbar">
         <div class="nav-brand"><span>同传姬 (VAD Pro)</span><div id="statusDot" class="status-dot"></div></div>
-        <button class="nav-btn" onclick="openModal()">⚙ 控制台</button>
+        <div style="display:flex;gap:8px;align-items:center">
+            <button class="nav-btn" onclick="exportData('csv')"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg> CSV</button>
+            <button class="nav-btn" onclick="exportData('json')"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg> JSON</button>
+            <button class="nav-btn" onclick="openModal()"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg> 控制台</button>
+        </div>
     </div>
 
     <div class="container" id="container">
@@ -1389,11 +1447,11 @@ INDEX_HTML = """
         </div>
         <div class="resizer" id="dragMe"></div>
         <div class="panel">
-            <div class="panel-header">📝 实时转写</div>
+            <div class="panel-header" style="display:flex;align-items:center;gap:6px;"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line><polyline points="10 9 9 9 8 9"></polyline></svg> 实时转写</div>
             <div class="scroll-area" id="transBox"></div>
             <div class="chat-input-area">
                 <div class="chat-box">
-                    <textarea id="chatInput" class="chat-textarea" placeholder="手动发送弹幕..." maxlength="40"></textarea>
+                    <textarea id="chatInput" class="chat-textarea" placeholder="手动发送弹幕..." maxlength="40" oninput="document.getElementById('charCount').innerText=this.value.length+'/40'" onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendChat();}"></textarea>
                     <div class="chat-tools">
                         <span style="font-size:12px;color:#999" id="charCount">0/40</span>
                         <button class="chat-send-btn" onclick="sendChat()">发送</button>
@@ -1409,10 +1467,10 @@ INDEX_HTML = """
             <!-- 侧边栏 -->
             <div class="sidebar">
                 <div class="sidebar-title">设置菜单</div>
-                <div class="tab-btn active" onclick="switchTab('general', this)">⚙ 常规设置</div>
-                <div class="tab-btn" onclick="switchTab('vad', this)">🎙 VAD 参数</div>
-                <div class="tab-btn" onclick="switchTab('filter', this)">🛡 过滤设置</div>
-                <div class="tab-btn" onclick="switchTab('logs', this)">📜 运行日志</div>
+                <div class="tab-btn active" onclick="switchTab('general', this)"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg> 常规设置</div>
+                <div class="tab-btn" onclick="switchTab('vad', this)"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3z"></path><path d="M19 10v2a7 7 0 0 1-14 0v-2"></path><line x1="12" y1="19" x2="12" y2="22"></line></svg> VAD 参数</div>
+                <div class="tab-btn" onclick="switchTab('filter', this)"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path></svg> 过滤设置</div>
+                <div class="tab-btn" onclick="switchTab('logs', this)"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="4 7 4 4 20 4 20 7"></polyline><line x1="9" y1="20" x2="15" y2="20"></line><line x1="12" y1="4" x2="12" y2="20"></line></svg> 运行日志</div>
             </div>
             
             <!-- 内容区 -->
@@ -1424,11 +1482,11 @@ INDEX_HTML = """
 
                 <!-- 1. 常规设置 -->
                 <div id="tab-general" class="tab-content active">
-                    <button onclick="toggleRun()" id="runBtn" style="width:100%; padding:14px; background:#10b981; color:white; border:none; border-radius:8px; font-weight:bold; margin-bottom:25px; cursor:pointer;">▶ 启动同传</button>
+                    <button onclick="toggleRun()" id="runBtn" style="width:100%; padding:14px; background:#10b981; color:white; border:none; border-radius:8px; font-weight:bold; margin-bottom:25px; cursor:pointer; display:flex; align-items:center; justify-content:center; gap:8px;"><svg id="runIcon" width="18" height="18" viewBox="0 0 24 24" fill="currentColor" stroke="none"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg> <span>启动同传</span></button>
                     
                     <!-- ASR 引擎选择 -->
                     <div style="background:#f8fafc; padding:15px; border-radius:8px; margin-bottom:20px; border:1px solid #e2e8f0;">
-                        <div style="font-weight:bold; color:#1e293b; margin-bottom:10px; font-size:14px;">🎙️ ASR 引擎选择</div>
+                        <div style="font-weight:bold; color:#1e293b; margin-bottom:10px; font-size:14px; display:flex; align-items:center; gap:6px;"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3z"></path><path d="M19 10v2a7 7 0 0 1-14 0v-2"></path><line x1="12" y1="19" x2="12" y2="22"></line></svg> ASR 引擎选择</div>
                         <div class="form-group">
                             <label class="form-label">识别引擎</label>
                             <select id="set_asr_engine" class="form-input" onchange="toggleAsrSettings()">
@@ -1465,7 +1523,7 @@ INDEX_HTML = """
                     
                     <!-- 上下文翻译设置 -->
                     <div style="background:#f0fdf4; padding:15px; border-radius:8px; margin-bottom:20px; border:1px solid #bbf7d0;">
-                        <div style="font-weight:bold; color:#15803d; margin-bottom:10px; font-size:14px;">🧠 上下文翻译</div>
+                        <div style="font-weight:bold; color:#15803d; margin-bottom:10px; font-size:14px; display:flex; align-items:center; gap:6px;"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><path d="M12 16v-4"></path><path d="M12 8h.01"></path></svg> 上下文翻译</div>
                         <div class="form-group">
                             <label class="form-label">启用上下文翻译</label>
                             <select id="set_use_translation_context" class="form-input">
@@ -1491,8 +1549,9 @@ INDEX_HTML = """
                     </div>
                     
                     <div style="border-top:1px solid #eee; margin-top:20px; padding-top:20px;">
-                         <div style="border:2px dashed #e5e7eb; padding:15px; text-align:center; cursor:pointer; border-radius:8px; color:#6b7280; font-size:13px;" onclick="document.getElementById('cFile').click()">
-                            <span id="uTxt">📦 点击上传新版代码 (.py)</span>
+                         <div style="border:2px dashed #e5e7eb; padding:15px; text-align:center; cursor:pointer; border-radius:8px; color:#6b7280; font-size:13px; display:flex; align-items:center; justify-content:center; gap:8px;" onclick="document.getElementById('cFile').click()">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"></path><polyline points="3.27 6.96 12 12.01 20.73 6.96"></polyline><line x1="12" y1="22.08" x2="12" y2="12"></line></svg> 
+                            <span id="uTxt">点击上传新版代码 (.py)</span>
                             <input type="file" id="cFile" hidden accept=".py" onchange="handleFile(this)">
                         </div>
                         <button onclick="upCode()" style="width:100%;margin-top:10px;padding:8px;background:#4b5563;color:white;border:none;border-radius:6px;cursor:pointer;">更新并重启</button>
@@ -1584,7 +1643,8 @@ INDEX_HTML = """
     socket.on('new_message', d => {
         const b = document.getElementById('transBox');
         const div = document.createElement('div'); div.className = 'msg-card';
-        div.innerHTML = `<div class="msg-header">${new Date(d.ts*1000).toLocaleTimeString()}</div>
+        const now = new Date().toLocaleTimeString('zh-CN', {hour12: false});
+        div.innerHTML = `<div class="msg-header">${now}</div>
             <div class="edit-grid"><textarea class="edit-input orig" readonly>${esc(d.orig)}</textarea>
             <textarea class="edit-input tran">${esc(d.tran)}</textarea><div class="send-btn-mini" onclick="sendTran(this)">➤</div></div>`;
         b.appendChild(div);
@@ -1609,7 +1669,14 @@ INDEX_HTML = """
         } catch(e){}
     };
 
-    function setRunBtn(r) { const b=document.getElementById('runBtn'); b.innerText=r?"⏹ 停止同传":"▶ 启动同传"; b.style.background=r?"#ef4444":"#10b981"; }
+    function setRunBtn(r) { 
+        const b=document.getElementById('runBtn');
+        const span=b.querySelector('span');
+        const icon=document.getElementById('runIcon');
+        span.innerText=r?"停止同传":"启动同传";
+        icon.innerHTML=r?'<rect x="6" y="6" width="12" height="12"></rect>':'<polygon points="5 3 19 12 5 21 5 3"></polygon>';
+        b.style.background=r?"#ef4444":"#10b981"; 
+    }
     async function toggleRun() { const a = document.getElementById('runBtn').innerText.includes('启动')?'start':'stop'; await fetch('/toggle_run',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:a})}); }
     
     // === Tab 切换逻辑 ===
@@ -1719,8 +1786,9 @@ INDEX_HTML = """
     }
 
     async function fetchLogs() { try { const d = await (await fetch('/logs')).json(); const el = document.getElementById('logConsole'); if(el.innerText.length!==d.logs.join('\\n').length){el.innerText=d.logs.join('\\n');el.scrollTop=el.scrollHeight;}} catch{} }
-    async function sendChat() { const i=document.getElementById('chatInput'); if(!i.value.trim())return; await fetch('/send',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text:i.value})}); i.value=''; }
+    async function sendChat() { const i=document.getElementById('chatInput'); if(!i.value.trim())return; await fetch('/send',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text:i.value})}); i.value=''; document.getElementById('charCount').innerText='0/40'; }
     async function sendTran(btn) { const t=btn.parentElement.querySelector('.tran').value; if(!t)return; btn.innerText='...'; const r=await fetch('/send',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text:'['+t+']'})}); btn.innerText=(await r.json()).ok?'✔':'X'; setTimeout(()=>btn.innerText='➤',2000); }
+    function exportData(fmt) { window.open('/export/' + fmt, '_blank'); }
     function handleFile(i){ if(i.files[0]) document.getElementById('uTxt').innerText=i.files[0].name; }
     async function upCode(){ 
         const f=document.getElementById('cFile').files[0]; 
@@ -1746,6 +1814,21 @@ INDEX_HTML = """
 </body>
 </html>
 """
+
+def find_available_port(preferred=5231):
+    """检查端口是否可用，不可用则随机分配一个"""
+    import socket as _socket
+    # 先尝试首选端口
+    with _socket.socket(_socket.AF_INET, _socket.SOCK_STREAM) as s:
+        try:
+            s.bind(("0.0.0.0", preferred))
+            return preferred
+        except OSError:
+            pass
+    # 首选端口被占用，让系统分配随机端口
+    with _socket.socket(_socket.AF_INET, _socket.SOCK_STREAM) as s:
+        s.bind(("0.0.0.0", 0))
+        return s.getsockname()[1]
 
 if __name__ == "__main__":
     try:
@@ -1773,14 +1856,25 @@ if __name__ == "__main__":
         socketio.start_background_task(worker_loop)
         log("Init", "后台工作线程启动完成")
         
+        # 检查端口可用性
+        port = find_available_port(5231)
+        if port != 5231:
+            log("Init", f"端口 5231 已被占用，自动切换到端口 {port}")
+        
         log("Init", "步骤4: 启动 Web 服务...")
-        # 启动 Web 服务
         log("Init", "启动 Web 服务...")
-        log("Init", "服务已启动，请访问 http://127.0.0.1:5000")
+        log("Init", f"服务已启动，请访问 http://127.0.0.1:{port}")
         log("Init", "按 Ctrl+C 停止服务")
         
+        # 延迟自动打开浏览器
+        import webbrowser
+        def _open_browser():
+            time.sleep(1.5)
+            webbrowser.open(f"http://127.0.0.1:{port}")
+        threading.Thread(target=_open_browser, daemon=True).start()
+        
         log("Init", "步骤5: 开始运行 SocketIO 服务器...")
-        socketio.run(app, host="0.0.0.0", port=5002, debug=False)
+        socketio.run(app, host="0.0.0.0", port=port, debug=False)
         
     except KeyboardInterrupt:
         log("Info", "用户中断，正在关闭服务...")
@@ -1789,4 +1883,9 @@ if __name__ == "__main__":
         import traceback
         traceback.print_exc()
     finally:
+        # 优雅关闭 ASR 连接
+        try:
+            stop_qwen_asr()
+        except Exception:
+            pass
         log("Info", "服务已关闭")
