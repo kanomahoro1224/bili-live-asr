@@ -1,0 +1,545 @@
+<!doctype html>
+<html lang="zh">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>AI 同传控制台（本地 ASR）</title>
+    <script src="https://cdn.socket.io/4.6.0/socket.io.min.js"></script>
+    <style>
+        :root { --primary: #4f46e5; --bg: #f3f4f6; --text: #1f2937; --sidebar-bg: #f9fafb; --sidebar-hover: #e5e7eb; }
+        * { box-sizing: border-box; }
+        body { margin: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: var(--bg); color: var(--text); height: 100vh; overflow: hidden; }
+        .navbar { height: 50px; background: #fff; border-bottom: 1px solid #e5e7eb; display: flex; align-items: center; justify-content: space-between; padding: 0 20px; }
+        .nav-left { display: flex; align-items: center; gap: 12px; min-width: 0; }
+        .nav-brand { font-weight: 800; display: flex; align-items: center; gap: 10px; }
+        .profile-pill { height: 34px; border: 1px solid #e5e7eb; background: #fff; border-radius: 8px; display: flex; align-items: center; gap: 8px; padding: 4px 10px 4px 5px; min-width: 0; color: #374151; font-size: 13px; font-weight: 600; }
+        .profile-button { cursor: pointer; }
+        .profile-button:hover { background: #f9fafb; border-color: #c7d2fe; color: var(--primary); }
+        .profile-avatar { width: 24px; height: 24px; border-radius: 50%; background: #e5e7eb; overflow: hidden; flex: 0 0 24px; display: flex; align-items: center; justify-content: center; color: #6b7280; font-size: 12px; font-weight: 800; }
+        .profile-avatar img { width: 100%; height: 100%; object-fit: cover; display: none; }
+        .profile-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 120px; }
+        .room-pill { max-width: 220px; }
+        .room-name { max-width: 150px; }
+        .status-dot { width: 8px; height: 8px; border-radius: 50%; background: #d1d5db; }
+        .status-dot.active { background: #10b981; box-shadow: 0 0 5px #10b981; }
+        .nav-btn { background: transparent; border: 1px solid #e5e7eb; padding: 6px 12px; border-radius: 6px; cursor: pointer; font-size: 13px; font-weight: 600; color: #4b5563; display: flex; align-items: center; gap: 6px; }
+        .nav-btn:hover { background: #f3f4f6; color: var(--primary); }
+        .container { display: flex; padding: 15px; height: calc(100vh - 50px); width: 100%; }
+        .player-wrapper { flex: 0 0 60%; background: #000; border-radius: 12px; overflow: hidden; min-width: 300px; max-width: 90%; display: flex; }
+        .player-wrapper iframe { width: 100%; height: 100%; border: none; }
+        .resizer { width: 12px; cursor: col-resize; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
+        .resizer::after { content: ""; width: 4px; height: 40px; background: #d1d5db; border-radius: 2px; }
+        .panel { flex: 1; background: #fff; border-radius: 12px; border: 1px solid #e5e7eb; display: flex; flex-direction: column; overflow: hidden; min-width: 300px; position: relative; }
+        .panel-header { padding: 12px 16px; border-bottom: 1px solid #f3f4f6; font-weight: 600; font-size: 14px; background: #fafafa; display: flex; align-items: center; gap: 10px; }
+        .vad-bar { flex: 1; position: relative; height: 18px; background: #d1d5db; border-radius: 4px; overflow: hidden; min-width: 80px; }
+        .vad-bar-fill { position: absolute; left: 0; top: 0; height: 100%; width: 0%; background: #10b981; transition: width 0.1s linear; }
+        .vad-bar-text { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; font-size: 11px; font-weight: 700; color: #1f2937; }
+        .scroll-area { flex: 1; overflow-y: auto; padding: 15px; background: #f9fafb; scroll-behavior: smooth; }
+        .msg-card { background: #fff; border: 1px solid #e5e7eb; border-radius: 8px; padding: 12px; margin-bottom: 12px; box-shadow: 0 1px 2px rgba(0,0,0,0.02); }
+        .msg-header { font-size: 12px; color: #9ca3af; margin-bottom: 6px; }
+        .edit-grid { display: grid; grid-template-columns: 1fr 1fr 40px; gap: 8px; align-items: start; }
+        .edit-column { min-width: 0; }
+        .edit-input { width: 100%; padding: 8px; border: 1px solid #e5e7eb; border-radius: 6px; font-size: 13px; resize: none; height: 48px; font-family: inherit; }
+        .edit-input.orig { background: #f3f4f6; color: #4b5563; }
+        .latency-line { margin-top: 5px; color: #6b7280; font-size: 11px; line-height: 1.2; }
+        .send-btn-mini { background: #eff6ff; color: var(--primary); border: 1px solid #c7d2fe; border-radius: 6px; cursor: pointer; display: flex; align-items: center; justify-content: center; min-height: 48px; font-weight: 700; }
+        .jump-bottom-btn { display: none; position: absolute; right: 18px; bottom: 92px; width: 36px; height: 36px; border-radius: 50%; border: 1px solid #c7d2fe; background: #eff6ff; color: var(--primary); font-size: 18px; font-weight: 800; cursor: pointer; box-shadow: 0 8px 18px rgba(15, 23, 42, 0.12); z-index: 5; }
+        .jump-bottom-btn:hover { background: #dbeafe; }
+        .chat-input-area { padding: 10px; background: #fff; border-top: 1px solid #e5e7eb; }
+        .chat-box { display: flex; flex-direction: column; border: 1px solid #d1d5db; border-radius: 8px; padding: 8px; }
+        .chat-textarea { border: none; outline: none; width: 100%; resize: none; height: 40px; font-size: 14px; margin-bottom: 5px; }
+        .chat-tools { display: flex; justify-content: space-between; align-items: center; }
+        .chat-send-btn { background: #00aeec; color: white; border: none; padding: 6px 16px; border-radius: 4px; cursor: pointer; }
+        .modal { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.4); backdrop-filter: blur(4px); z-index: 200; align-items: center; justify-content: center; }
+        .modal-box { background: #fff; width: 90%; max-width: 850px; height: 80vh; border-radius: 12px; display: flex; overflow: hidden; box-shadow: 0 20px 25px -5px rgba(0,0,0,0.1); position: relative; }
+        .qr-box { width: 320px; max-width: calc(100vw - 32px); background: #fff; border-radius: 12px; padding: 22px; box-shadow: 0 20px 25px -5px rgba(0,0,0,0.1); text-align: center; }
+        .qr-title { font-size: 17px; font-weight: 800; color: #111827; margin-bottom: 14px; }
+        .qr-image-wrap { width: 220px; height: 220px; margin: 0 auto 12px; border: 1px solid #e5e7eb; border-radius: 8px; display: flex; align-items: center; justify-content: center; background: #f9fafb; }
+        .qr-image-wrap img { width: 200px; height: 200px; }
+        .qr-status { min-height: 20px; color: #4b5563; font-size: 13px; margin-bottom: 14px; }
+        .qr-close { width: 100%; padding: 10px 16px; border: 1px solid #d1d5db; background: #fff; border-radius: 8px; cursor: pointer; font-weight: 600; color: #374151; }
+        .qr-close:hover { background: #f3f4f6; }
+        .sidebar { width: 180px; background: var(--sidebar-bg); border-right: 1px solid #e5e7eb; display: flex; flex-direction: column; padding: 15px 0; }
+        .sidebar-title { font-weight: 800; padding: 0 20px 15px; font-size: 16px; color: #374151; border-bottom: 1px solid #e5e7eb; margin-bottom: 10px; }
+        .tab-btn { padding: 12px 20px; cursor: pointer; color: #4b5563; font-size: 14px; font-weight: 500; transition: all 0.2s; border-left: 3px solid transparent; display: flex; align-items: center; gap: 8px; }
+        .tab-btn:hover { background: var(--sidebar-hover); color: #111; }
+        .tab-btn.active { background: #fff; border-left-color: var(--primary); color: var(--primary); font-weight: 600; box-shadow: 0 1px 3px rgba(0,0,0,0.05); }
+        .content-area { flex: 1; display: flex; flex-direction: column; background: #fff; overflow: hidden; }
+        .content-header { padding: 15px 25px; border-bottom: 1px solid #f3f4f6; display: flex; justify-content: space-between; align-items: center; }
+        .content-title { font-size: 18px; font-weight: 700; color: #1f2937; }
+        .close-btn { cursor: pointer; font-size: 20px; color: #9ca3af; padding: 5px; }
+        .close-btn:hover { color: #4b5563; }
+        .tab-content { display: none; padding: 25px; overflow-y: auto; flex: 1; animation: fadeIn 0.2s; }
+        .tab-content.active { display: block; }
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(5px); } to { opacity: 1; transform: translateY(0); } }
+        .form-group { margin-bottom: 20px; }
+        .form-label { display: block; font-size: 13px; font-weight: 700; color: #4b5563; margin-bottom: 8px; }
+        .form-input { width: 100%; padding: 10px; border: 1px solid #d1d5db; border-radius: 6px; font-size: 14px; transition: border 0.2s; }
+        .form-input:focus { border-color: var(--primary); outline: none; box-shadow: 0 0 0 2px rgba(79, 70, 229, 0.1); }
+        .form-helper { font-size: 12px; color: #6b7280; margin-top: 5px; line-height: 1.4; }
+        .input-group { display: flex; gap: 10px; margin-bottom: 10px; }
+        .btn-add { background: #374151; color: white; border: none; padding: 0 20px; border-radius: 6px; cursor: pointer; font-size: 13px; white-space: nowrap; }
+        .btn-add:hover { background: #1f2937; }
+        .tag-container { display: flex; flex-wrap: wrap; gap: 8px; min-height: 40px; align-content: flex-start; }
+        .tag-item { background: #e5e7eb; color: #374151; padding: 6px 12px; border-radius: 4px; font-size: 13px; font-weight: 500; display: inline-flex; align-items: center; gap: 8px; }
+        .tag-close { cursor: pointer; color: #9ca3af; font-weight: bold; font-size: 14px; line-height: 1; }
+        .tag-close:hover { color: #ef4444; }
+        .tag-count { font-size: 12px; color: #9ca3af; margin-bottom: 5px; }
+        .modal-footer { padding: 15px 25px; border-top: 1px solid #f3f4f6; text-align: right; background: #fff; }
+        .save-btn { padding: 10px 24px; background: var(--primary); color: white; border: none; border-radius: 6px; font-weight: 600; cursor: pointer; }
+        .save-btn:hover { background: #4338ca; }
+        #logConsole { background: #1e1e1e; color: #10b981; font-family: monospace; padding: 15px; border-radius: 8px; height: 100%; overflow-y: scroll; font-size: 12px; white-space: pre-wrap; }
+        @media (max-width: 800px) {
+            .container { flex-direction: column; }
+            .room-pill { display: none; }
+            .profile-name { max-width: 84px; }
+            .modal-box { flex-direction: column; height: 90vh; }
+            .sidebar { width: 100%; flex-direction: row; overflow-x: auto; border-right: none; border-bottom: 1px solid #e5e7eb; padding: 0; }
+            .sidebar-title { display: none; }
+            .tab-btn { flex: 1; justify-content: center; padding: 15px; border-left: none; border-bottom: 3px solid transparent; }
+            .tab-btn.active { border-left: none; border-bottom-color: var(--primary); }
+        }
+    </style>
+</head>
+<body>
+    <div class="navbar">
+        <div class="nav-left">
+            <div class="nav-brand"><span>同传姬（本地 ASR）</span><div id="statusDot" class="status-dot"></div></div>
+            <button class="profile-pill profile-button" id="biliAccount" onclick="openBiliLogin()" title="Bilibili 账号">
+                <span class="profile-avatar"><img id="biliAccountAvatar" alt=""><span id="biliAccountFallback">?</span></span>
+                <span class="profile-name" id="biliAccountName">点击登录</span>
+            </button>
+            <div class="profile-pill room-pill" title="当前直播间">
+                <span class="profile-avatar"><img id="biliRoomAvatar" alt=""><span id="biliRoomFallback">播</span></span>
+                <span class="profile-name room-name" id="biliRoomName">直播间</span>
+            </div>
+        </div>
+        <div style="display:flex;gap:8px;align-items:center">
+            <button class="nav-btn" onclick="exportData('csv')">CSV</button>
+            <button class="nav-btn" onclick="exportData('json')">JSON</button>
+            <button class="nav-btn" onclick="openModal()">控制台</button>
+        </div>
+    </div>
+
+    <div id="biliLoginModal" class="modal" onclick="if(event.target===this) closeBiliLogin()">
+        <div class="qr-box">
+            <div class="qr-title">Bilibili 扫码登录</div>
+            <div class="qr-image-wrap"><img id="biliQrImage" alt=""></div>
+            <div class="qr-status" id="biliQrStatus">正在创建二维码...</div>
+            <button class="qr-close" onclick="closeBiliLogin()">关闭</button>
+        </div>
+    </div>
+
+    <div class="container" id="container">
+        <div class="player-wrapper" id="leftPanel">
+            <iframe id="liveFrame" src="https://www.bilibili.com/blackboard/live/live-activity-player.html?cid=15152878&logo=0&mute=0" allowfullscreen></iframe>
+        </div>
+        <div class="resizer" id="dragMe"></div>
+        <div class="panel">
+            <div class="panel-header">
+                <span>实时转写</span>
+                <span style="font-size:12px;color:#9ca3af;font-weight:500;">VAD</span>
+                <div class="vad-bar" title="Silero 语音置信度">
+                    <div class="vad-bar-fill" id="vadFill"></div>
+                    <div class="vad-bar-text" id="vadText">0%</div>
+                </div>
+            </div>
+            <div class="scroll-area" id="transBox"></div>
+            <button class="jump-bottom-btn" id="jumpBottomBtn" onclick="scrollTranslationsToBottom()" title="跳到最新">&#8595;</button>
+            <div class="chat-input-area">
+                <div class="chat-box">
+                    <textarea id="chatInput" class="chat-textarea" placeholder="手动发送弹幕..." maxlength="40" oninput="document.getElementById('charCount').innerText=this.value.length+'/40'" onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendChat();}"></textarea>
+                    <div class="chat-tools">
+                        <span style="font-size:12px;color:#999" id="charCount">0/40</span>
+                        <button class="chat-send-btn" onclick="sendChat()">发送</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div id="settingsModal" class="modal" onclick="if(event.target===this) closeModal()">
+        <div class="modal-box">
+            <div class="sidebar">
+                <div class="sidebar-title">设置菜单</div>
+                <div class="tab-btn active" onclick="switchTab('general', this)">常规设置</div>
+                <div class="tab-btn" onclick="switchTab('vad', this)">VAD 参数</div>
+                <div class="tab-btn" onclick="switchTab('filter', this)">过滤设置</div>
+                <div class="tab-btn" onclick="switchTab('logs', this)">运行日志</div>
+            </div>
+            <div class="content-area">
+                <div class="content-header">
+                    <div class="content-title" id="pageTitle">常规设置</div>
+                    <div class="close-btn" onclick="closeModal()">×</div>
+                </div>
+
+                <div id="tab-general" class="tab-content active">
+                    <button onclick="toggleRun()" id="runBtn" style="width:100%; padding:14px; background:#10b981; color:white; border:none; border-radius:8px; font-weight:bold; margin-bottom:25px; cursor:pointer;"><span>启动同传</span></button>
+
+                    <div style="background:#f8fafc; padding:15px; border-radius:8px; margin-bottom:20px; border:1px solid #e2e8f0;">
+                        <div style="font-weight:bold; color:#1e293b; margin-bottom:10px; font-size:14px;">本地 ASR</div>
+                        <div class="form-group">
+                            <label class="form-label">推理设备</label>
+                            <select id="set_asr_device" class="form-input">
+                                <option value="cuda">GPU (CUDA，推荐)</option>
+                                <option value="cpu">CPU（较慢）</option>
+                            </select>
+                            <div class="form-helper">本地 ASR 模型推理设备，GPU 通常更快。</div>
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label">识别语言</label>
+                            <select id="set_asr_language" class="form-input">
+                                <option value="auto">自动检测 (Auto)</option>
+                                <option value="ja">日语 (Japanese)</option>
+                                <option value="zh">中文 (Chinese)</option>
+                                <option value="en">英语 (English)</option>
+                                <option value="ko">韩语 (Korean)</option>
+                            </select>
+                            <div class="form-helper">使用 auto 时会自动判断语种。</div>
+                        </div>
+                    </div>
+
+                    <div class="form-group">
+                        <label class="form-label">游戏/场景提示</label>
+                        <input id="set_game_hint" class="form-input" placeholder="例如：杂谈、APEX" />
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">额外翻译提示</label>
+                        <textarea id="set_prompt_extra" class="form-input" style="height:60px;resize:vertical;" placeholder="补充术语、语气、翻译偏好"></textarea>
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">LLM Base URL</label>
+                        <input id="set_llm_base_url" class="form-input" placeholder="https://api.openai.com/v1" />
+                        <div class="form-helper">OpenAI 兼容接口地址。</div>
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">LLM API Key</label>
+                        <input type="password" id="set_llm_api_key" class="form-input" placeholder="sk-..." />
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">LLM 模型</label>
+                        <input id="set_llm_model" class="form-input" placeholder="gpt-4.1-mini" />
+                    </div>
+
+                    <div style="background:#f0fdf4; padding:15px; border-radius:8px; margin-bottom:20px; border:1px solid #bbf7d0;">
+                        <div style="font-weight:bold; color:#15803d; margin-bottom:10px; font-size:14px;">上下文翻译</div>
+                        <div class="form-group">
+                            <label class="form-label">启用上下文翻译</label>
+                            <select id="set_use_translation_context" class="form-input">
+                                <option value="true">启用（推荐）</option>
+                                <option value="false">禁用，每句独立翻译</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label">上下文窗口大小</label>
+                            <input type="number" id="set_context_window_size" class="form-input" min="1" max="20" placeholder="5" />
+                        </div>
+                    </div>
+
+                    <div class="form-group">
+                        <label class="form-label">直播间 URL</label>
+                        <input id="set_bili_room_url" class="form-input" />
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">直播间 Room ID（用于弹幕）</label>
+                        <input id="set_bili_room_id" class="form-input" />
+                    </div>
+                </div>
+
+                <div id="tab-vad" class="tab-content">
+                    <div class="form-helper" style="margin-bottom:15px;">本地版使用 Silero VAD 切分语音段。</div>
+                    <div class="form-group">
+                        <label class="form-label">触发阈值 (VAD Threshold)</label>
+                        <input type="number" id="set_vad_threshold" class="form-input" step="0.05" min="0.1" max="0.95" />
+                        <div class="form-helper">范围 0.1-0.95，越小越灵敏。</div>
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">最短语音段（秒）</label>
+                        <input type="number" id="set_min_speech_duration" class="form-input" step="0.1" placeholder="1.0" />
+                        <div class="form-helper">短于此时长的语音段不会单独识别。</div>
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">最长语音段（秒）</label>
+                        <input type="number" id="set_max_record_time" class="form-input" step="1" placeholder="8" />
+                        <div class="form-helper">超过此时长会强制切分。</div>
+                    </div>
+                </div>
+
+                <div id="tab-filter" class="tab-content">
+                    <div class="form-group">
+                        <label class="form-label">添加屏蔽词</label>
+                        <div class="input-group">
+                            <input id="new_ban_word" class="form-input" placeholder="输入要屏蔽的内容（回车添加）" onkeydown="if(event.keyCode==13) addBanWord()">
+                            <button class="btn-add" onclick="addBanWord()">添加</button>
+                        </div>
+                        <div class="tag-count">屏蔽列表（<span id="tagCount">0</span>）</div>
+                        <div id="ban_tag_list" class="tag-container"></div>
+                        <input type="hidden" id="set_banned_words">
+                        <div class="form-helper" style="margin-top:15px;">识别结果包含这些词时会直接丢弃，不区分大小写。</div>
+                    </div>
+                </div>
+
+                <div id="tab-logs" class="tab-content">
+                    <div id="logConsole">正在连接日志...</div>
+                </div>
+
+                <div class="modal-footer">
+                    <button class="save-btn" onclick="saveSettings()">保存配置</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+    const socket = io();
+    let logInterval = null;
+    let bannedTags = [];
+    let biliPollTimer = null;
+    let biliQrKey = "";
+    let biliLoggedIn = false;
+
+    const resizer = document.getElementById('dragMe'), left = document.getElementById('leftPanel'), con = document.getElementById('container'), iframe = document.getElementById('liveFrame');
+    let x=0, w=0;
+    resizer.onmousedown = e => { x=e.clientX; w=left.getBoundingClientRect().width; iframe.style.pointerEvents='none'; document.onmousemove=mm; document.onmouseup=mu; };
+    function mm(e){ const nw = ((w + e.clientX - x)*100)/con.getBoundingClientRect().width; if(nw>20&&nw<80) left.style.flex=`0 0 ${nw}%`; }
+    function mu(){ iframe.style.pointerEvents='auto'; document.onmousemove=null; }
+
+    function latencyText(value) {
+        const n = Number(value);
+        return Number.isFinite(n) ? Math.max(0, Math.round(n)) : '--';
+    }
+    function renderMessageCard(d, timeText) {
+        const div = document.createElement('div');
+        div.className = 'msg-card';
+        div.innerHTML = `<div class="msg-header">${timeText}</div>
+            <div class="edit-grid">
+                <div class="edit-column">
+                    <textarea class="edit-input orig" readonly>${esc(d.orig)}</textarea>
+                    <div class="latency-line">ASR ${latencyText(d.asr_ms)} ms</div>
+                </div>
+                <div class="edit-column">
+                    <textarea class="edit-input tran">${esc(d.tran)}</textarea>
+                    <div class="latency-line">TL ${latencyText(d.tl_ms)} ms</div>
+                </div>
+                <button class="send-btn-mini" onclick="sendTran(this)">&#8594;</button>
+            </div>`;
+        return div;
+    }
+    function isTranslationsAtBottom() {
+        const b = document.getElementById('transBox');
+        return b.scrollHeight - b.scrollTop - b.clientHeight < 8;
+    }
+    function setJumpBottomVisible(visible) {
+        document.getElementById('jumpBottomBtn').style.display = visible ? 'block' : 'none';
+    }
+    function scrollTranslationsToBottom() {
+        const b = document.getElementById('transBox');
+        b.scrollTop = b.scrollHeight;
+        setJumpBottomVisible(false);
+    }
+    document.getElementById('transBox').addEventListener('scroll', () => {
+        if (isTranslationsAtBottom()) setJumpBottomVisible(false);
+    });
+
+    socket.on('connect', ()=>document.getElementById('statusDot').classList.add('active'));
+    socket.on('vad_update', d => {
+        const pct = Math.max(0, Math.min(100, d.confidence|0));
+        document.getElementById('vadFill').style.width = pct + '%';
+        document.getElementById('vadText').innerText = pct + '%';
+    });
+    socket.on('new_message', d => {
+        const b = document.getElementById('transBox');
+        const oldTop = b.scrollTop;
+        const now = new Date().toLocaleTimeString('zh-CN', {hour12: false});
+        b.appendChild(renderMessageCard(d, now));
+        b.scrollTop = oldTop;
+        setJumpBottomVisible(b.scrollHeight > b.clientHeight);
+    });
+    socket.on('status_update', s => setRunBtn(s.running));
+
+    window.onload = async () => {
+        try {
+            loadBiliProfile();
+            setRunBtn((await (await fetch('/status')).json()).running);
+            const h = await (await fetch('/latest')).json();
+            const b = document.getElementById('transBox');
+            h.forEach(d => b.appendChild(renderMessageCard(d, new Date(d.ts*1000).toLocaleTimeString())));
+            b.scrollTop = b.scrollHeight;
+            setJumpBottomVisible(false);
+        } catch(e){}
+    };
+
+    function setProfileAvatar(imgId, fallbackId, url, fallbackText) {
+        const img = document.getElementById(imgId);
+        const fb = document.getElementById(fallbackId);
+        fb.innerText = fallbackText || '?';
+        if(url) {
+            img.onload = () => { img.style.display='block'; fb.style.display='none'; };
+            img.onerror = () => { img.style.display='none'; fb.style.display='block'; };
+            img.src = url;
+        } else {
+            img.removeAttribute('src');
+            img.style.display='none';
+            fb.style.display='block';
+        }
+    }
+
+    async function loadBiliProfile() {
+        try {
+            const data = await (await fetch('/bili/profile')).json();
+            if(!data.ok) return;
+            const account = data.account || {};
+            const room = data.room || {};
+            biliLoggedIn = !!account.logged_in;
+            document.getElementById('biliAccountName').innerText = account.name || '点击登录';
+            setProfileAvatar('biliAccountAvatar', 'biliAccountFallback', account.avatar, biliLoggedIn ? '账' : '?');
+            document.getElementById('biliAccount').title = biliLoggedIn ? '当前 Bilibili 账号' : '点击登录 Bilibili';
+            document.getElementById('biliRoomName').innerText = room.name || '直播间';
+            setProfileAvatar('biliRoomAvatar', 'biliRoomFallback', room.avatar, '播');
+        } catch(e) {}
+    }
+
+    async function openBiliLogin() {
+        if(biliLoggedIn) {
+            loadBiliProfile();
+            return;
+        }
+        const modal = document.getElementById('biliLoginModal');
+        const status = document.getElementById('biliQrStatus');
+        const img = document.getElementById('biliQrImage');
+        modal.style.display = 'flex';
+        status.innerText = '正在创建二维码...';
+        img.removeAttribute('src');
+        if(biliPollTimer) clearInterval(biliPollTimer);
+        try {
+            const data = await (await fetch('/bili/login/qrcode', {method:'POST'})).json();
+            if(!data.ok) throw new Error(data.error || '二维码创建失败');
+            biliQrKey = data.qrcode_key;
+            img.src = data.image;
+            status.innerText = '请使用 Bilibili 手机端扫码';
+            biliPollTimer = setInterval(pollBiliLogin, 1800);
+        } catch(e) {
+            status.innerText = e.message || '二维码创建失败';
+        }
+    }
+
+    async function pollBiliLogin() {
+        if(!biliQrKey) return;
+        try {
+            const data = await (await fetch('/bili/login/poll', {
+                method:'POST',
+                headers:{'Content-Type':'application/json'},
+                body:JSON.stringify({qrcode_key:biliQrKey})
+            })).json();
+            document.getElementById('biliQrStatus').innerText = data.message || '等待确认';
+            if(data.ok) {
+                closeBiliLogin();
+                await loadBiliProfile();
+            } else if(data.status === 'expired') {
+                clearInterval(biliPollTimer);
+                biliPollTimer = null;
+            }
+        } catch(e) {
+            document.getElementById('biliQrStatus').innerText = '登录状态获取失败';
+        }
+    }
+
+    function closeBiliLogin() {
+        document.getElementById('biliLoginModal').style.display='none';
+        if(biliPollTimer) clearInterval(biliPollTimer);
+        biliPollTimer = null;
+        biliQrKey = '';
+    }
+
+    function setRunBtn(r) {
+        const b=document.getElementById('runBtn');
+        b.querySelector('span').innerText=r?"停止同传":"启动同传";
+        b.style.background=r?"#ef4444":"#10b981";
+    }
+    async function toggleRun() {
+        const a = document.getElementById('runBtn').innerText.includes('启动')?'start':'stop';
+        await fetch('/toggle_run',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:a})});
+    }
+
+    function switchTab(tabId, btn) {
+        document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        document.getElementById('pageTitle').innerText = btn.innerText;
+        document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+        document.getElementById('tab-'+tabId).classList.add('active');
+        if(tabId === 'logs') { if(!logInterval) { fetchLogs(); logInterval = setInterval(fetchLogs, 1500); } }
+        else { if(logInterval) { clearInterval(logInterval); logInterval = null; } }
+    }
+
+    function renderTags() {
+        const c = document.getElementById('ban_tag_list'); c.innerHTML='';
+        bannedTags.forEach((w,i)=>{ if(!w.trim())return;
+            const t=document.createElement('div'); t.className='tag-item';
+            t.innerHTML=`<span>${esc(w)}</span><span class="tag-close" onclick="removeBanWord(${i})">×</span>`;
+            c.appendChild(t);
+        });
+        document.getElementById('tagCount').innerText=bannedTags.length;
+    }
+    function addBanWord(){
+        const i=document.getElementById('new_ban_word'); const v=i.value.trim();
+        if(v && !bannedTags.includes(v)) { bannedTags.push(v); renderTags(); }
+        i.value='';
+    }
+    function removeBanWord(i){ bannedTags.splice(i,1); renderTags(); }
+
+    function openModal() {
+        document.getElementById('settingsModal').style.display = 'flex';
+        fetch('/settings').then(r=>r.json()).then(c => {
+            document.getElementById('set_asr_device').value = c.asr_device||'cuda';
+            document.getElementById('set_asr_language').value = c.asr_language||'auto';
+            document.getElementById('set_game_hint').value = c.game_hint||'';
+            document.getElementById('set_prompt_extra').value = c.prompt_extra||'';
+            document.getElementById('set_llm_base_url').value = c.llm_base_url||'https://api.openai.com/v1';
+            document.getElementById('set_llm_api_key').value = c.llm_api_key||'';
+            document.getElementById('set_llm_model').value = c.llm_model||'gpt-4.1-mini';
+            document.getElementById('set_use_translation_context').value = c.use_translation_context !== false ? 'true' : 'false';
+            document.getElementById('set_context_window_size').value = c.context_window_size||5;
+            document.getElementById('set_bili_room_url').value = c.bili_room_url||'';
+            document.getElementById('set_bili_room_id').value = c.bili_room_id||'';
+            document.getElementById('set_vad_threshold').value = c.vad_threshold||0.5;
+            document.getElementById('set_min_speech_duration').value = c.min_speech_duration||1.0;
+            document.getElementById('set_max_record_time').value = c.max_record_time||8;
+            const raw = c.banned_words || "";
+            bannedTags = raw.replace(/，/g, ',').split(',').map(s => s.trim()).filter(s => s);
+            renderTags();
+        });
+        switchTab('general', document.querySelector('.tab-btn'));
+    }
+
+    function closeModal() { document.getElementById('settingsModal').style.display='none'; if(logInterval) clearInterval(logInterval); }
+
+    async function saveSettings() {
+        await fetch('/settings', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({
+            asr_device: document.getElementById('set_asr_device').value,
+            asr_language: document.getElementById('set_asr_language').value,
+            game_hint: document.getElementById('set_game_hint').value,
+            prompt_extra: document.getElementById('set_prompt_extra').value,
+            llm_base_url: document.getElementById('set_llm_base_url').value,
+            llm_api_key: document.getElementById('set_llm_api_key').value,
+            llm_model: document.getElementById('set_llm_model').value,
+            use_translation_context: document.getElementById('set_use_translation_context').value === 'true',
+            context_window_size: parseInt(document.getElementById('set_context_window_size').value) || 5,
+            bili_room_url: document.getElementById('set_bili_room_url').value,
+            bili_room_id: document.getElementById('set_bili_room_id').value,
+            vad_threshold: parseFloat(document.getElementById('set_vad_threshold').value),
+            min_speech_duration: parseFloat(document.getElementById('set_min_speech_duration').value),
+            max_record_time: parseFloat(document.getElementById('set_max_record_time').value),
+            banned_words: bannedTags.join(', ')
+        })});
+        alert('配置已保存');
+        closeModal();
+    }
+
+    async function fetchLogs() { try { const d = await (await fetch('/logs')).json(); const el = document.getElementById('logConsole'); if(el.innerText.length!==d.logs.join('\\n').length){el.innerText=d.logs.join('\\n');el.scrollTop=el.scrollHeight;}} catch{} }
+    async function sendChat() { const i=document.getElementById('chatInput'); if(!i.value.trim())return; await fetch('/send',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text:i.value})}); i.value=''; document.getElementById('charCount').innerText='0/40'; }
+    async function sendTran(btn) { const t=btn.parentElement.querySelector('.tran').value; if(!t)return; btn.innerText='...'; const r=await fetch('/send',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text:'['+t+']'})}); btn.innerText=(await r.json()).ok?'OK':'X'; setTimeout(()=>btn.innerHTML='&#8594;',2000); }
+    function exportData(fmt) { window.open('/export/' + fmt, '_blank'); }
+    function esc(s){ return s?s.replace(/&/g,'&amp;').replace(/</g,'&lt;'):''; }
+    </script>
+</body>
+</html>

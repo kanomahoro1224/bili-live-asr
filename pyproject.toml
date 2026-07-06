@@ -1,0 +1,45 @@
+[project]
+name = "tong-livetrans"
+version = "0.1.0"
+description = "Bilibili live translation console with local Kotoba Whisper ASR"
+requires-python = ">=3.10,<3.13"
+dependencies = [
+    "dashscope",
+    "eventlet",
+    "flask",
+    "flask-socketio",
+    "huggingface-hub",
+    "librosa",
+    "modelscope",
+    "numpy",
+    "onnxruntime<1.24",
+    "qrcode[pil]",
+    "requests",
+    "silero-vad",
+    "soundfile",
+    "streamlink",
+    "torch",
+    "torchaudio",
+    "transformers>=5.12.0",
+]
+
+[dependency-groups]
+dev = [
+    "pytest",
+]
+
+[tool.uv]
+package = false
+
+[[tool.uv.index]]
+name = "pytorch-cu126"
+url = "https://download.pytorch.org/whl/cu126"
+explicit = true
+
+[tool.uv.sources]
+torch = [
+    { index = "pytorch-cu126", marker = "platform_system == 'Windows'" },
+]
+torchaudio = [
+    { index = "pytorch-cu126", marker = "platform_system == 'Windows'" },
+]
