@@ -15,7 +15,8 @@
         .profile-pill { height: 34px; border: 1px solid #e5e7eb; background: #fff; border-radius: 8px; display: flex; align-items: center; gap: 8px; padding: 4px 10px 4px 5px; min-width: 0; color: #374151; font-size: 13px; font-weight: 600; }
         .profile-button { cursor: pointer; }
         .profile-button:hover { background: #f9fafb; border-color: #c7d2fe; color: var(--primary); }
-        .account-logout-btn { display: none; height: 34px; border: 1px solid transparent; background: transparent; color: #6b7280; border-radius: 8px; padding: 0 8px; cursor: pointer; font-size: 13px; font-weight: 700; }
+        .account-logout-btn { display: none; width: 34px; height: 34px; border: 1px solid transparent; background: transparent; color: #6b7280; border-radius: 8px; padding: 0; cursor: pointer; align-items: center; justify-content: center; }
+        .account-logout-btn svg { width: 18px; height: 18px; stroke: currentColor; }
         .account-logout-btn:hover { color: #ef4444; background: #fef2f2; border-color: #fecaca; }
         .profile-avatar { width: 24px; height: 24px; border-radius: 50%; background: #e5e7eb; overflow: hidden; flex: 0 0 24px; display: flex; align-items: center; justify-content: center; color: #6b7280; font-size: 12px; font-weight: 800; }
         .profile-avatar img { width: 100%; height: 100%; object-fit: cover; display: none; }
@@ -131,7 +132,13 @@
                 <span class="profile-avatar"><img id="biliAccountAvatar" alt=""><span id="biliAccountFallback">?</span></span>
                 <span class="profile-name" id="biliAccountName">点击登录</span>
             </button>
-            <button type="button" class="account-logout-btn" id="biliLogoutBtn" onclick="logoutBili(event)" title="退出当前 Bilibili 账号">退出</button>
+            <button type="button" class="account-logout-btn" id="biliLogoutBtn" onclick="logoutBili(event)" title="退出当前 Bilibili 账号" aria-label="退出当前 Bilibili 账号">
+                <svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"></path>
+                    <path d="M16 17l5-5-5-5"></path>
+                    <path d="M21 12H9"></path>
+                </svg>
+            </button>
             <div class="profile-pill room-pill" title="当前直播间">
                 <span class="profile-avatar"><img id="biliRoomAvatar" alt=""><span id="biliRoomFallback">播</span></span>
                 <span class="profile-name room-name" id="biliRoomName">直播间</span>
