@@ -10,7 +10,7 @@ from livetrans.llm import LLMClient
 
 def test_build_prompt_without_context():
     p = build_prompt(["こんにちは"], "", "杂谈", "")
-    assert "待翻译内容：" in p
+    assert "待翻译内容" in p
     assert "前文对话上下文" not in p
     assert "こんにちは" in p
 

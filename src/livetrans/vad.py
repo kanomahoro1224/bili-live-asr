@@ -19,8 +19,10 @@ class VADProcessor:
         min_speech_duration=1.0,
         max_speech_duration=15.0,
         chunk_duration=0.032,
+        device="cpu",
     ):
         self.sample_rate = sample_rate
+        self.device = torch.device(str(device or "cpu"))
         self.threshold = threshold
         self.energy_threshold = 0.02
         self.min_speech_samples = int(min_speech_duration * sample_rate)
@@ -42,6 +44,10 @@ class VADProcessor:
             )
         else:
             self._model = load_silero_vad()
+        try:
+            self._model.to(self.device)
+        except AttributeError:
+            pass
         self._model.eval()
 
         self._speech_buffer = []
@@ -127,7 +133,7 @@ class VADProcessor:
         if len(chunk) < window_size:
             chunk = np.pad(chunk, (0, window_size - len(chunk)))
         with torch.inference_mode():
-            tensor = torch.from_numpy(chunk).float()
+            tensor = torch.from_numpy(chunk).float().to(self.device)
             return float(self._model(tensor, self.sample_rate).item())
 
     def _energy_confidence(self, audio_chunk: np.ndarray) -> float:

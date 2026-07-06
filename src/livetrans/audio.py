@@ -6,7 +6,9 @@ stream_frames() 启动 ffmpeg 拉流并按固定块大小产出 float32 单声�
 
 from __future__ import annotations
 
+import queue
 import subprocess
+import threading
 from typing import Callable, Iterator
 
 import numpy as np
@@ -38,11 +40,33 @@ def stream_frames(
     )
     if on_proc is not None:
         on_proc(proc)
+    chunks: queue.Queue[bytes | None] = queue.Queue(maxsize=8)
+
+    def _read_stdout() -> None:
+        try:
+            while proc.poll() is None:
+                chunk = proc.stdout.read(CHUNK_SIZE * 2)
+                if not chunk:
+                    break
+                chunks.put(chunk)
+        except Exception:
+            pass
+        finally:
+            try:
+                chunks.put_nowait(None)
+            except queue.Full:
+                pass
+
+    reader = threading.Thread(target=_read_stdout, daemon=True)
+    reader.start()
+
     try:
         while should_run() and proc.poll() is None:
             try:
-                chunk = proc.stdout.read(CHUNK_SIZE * 2)
-            except Exception:
+                chunk = chunks.get(timeout=0.2)
+            except queue.Empty:
+                continue
+            if chunk is None:
                 break
             if not chunk or len(chunk) != CHUNK_SIZE * 2:
                 break
@@ -57,3 +81,4 @@ def stream_frames(
                 proc.kill()
             except Exception:
                 pass
+        reader.join(timeout=0.5)

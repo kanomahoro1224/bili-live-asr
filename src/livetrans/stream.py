@@ -16,6 +16,8 @@ def get_stream_url(room_url: str) -> str:
         return ""
     try:
         session = Streamlink()
+        session.set_option("http-timeout", 10)
+        session.set_option("stream-timeout", 10)
         streams = session.streams(room_url)
         if not streams:
             return ""

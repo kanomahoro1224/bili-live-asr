@@ -9,7 +9,7 @@ from livetrans.config import DEFAULT_CONFIG, load_config, save_config
 def test_load_missing_file_writes_default(tmp_path):
     p = os.path.join(tmp_path, "config.json")
     cfg = load_config(p)
-    assert cfg["asr_engine"] == "kotoba_whisper"
+    assert cfg["asr_engine"] == "local_asr"
     assert cfg["asr_model_id"] == "kotoba-tech/kotoba-whisper-v2.2"
     assert cfg["asr_model_dir"] == "models/kotoba-whisper-v2.2"
     assert os.path.exists(p)
@@ -27,9 +27,25 @@ def test_load_merges_missing_keys(tmp_path):
 def test_load_grouped_config_returns_flat_runtime_values(tmp_path):
     p = os.path.join(tmp_path, "config.json")
     with open(p, "w", encoding="utf-8") as f:
-        json.dump({"web": {"web_password": "x"}, "vad": {"max_speech_duration": 8.0}}, f)
+        json.dump(
+            {
+                "web": {"web_password": "x"},
+                "asr": {
+                    "asr_engine": "remote_realtime_asr",
+                    "dashscope_api_key": "test-key",
+                    "remote_asr_model": "paraformer-realtime-v2",
+                    "remote_realtime_asr_model": "qwen3-asr-flash-realtime",
+                },
+                "vad": {"max_speech_duration": 8.0},
+            },
+            f,
+        )
     cfg = load_config(p)
     assert cfg["web_password"] == "x"
+    assert cfg["asr_engine"] == "remote_realtime_asr"
+    assert cfg["dashscope_api_key"] == "test-key"
+    assert cfg["remote_asr_model"] == "paraformer-realtime-v2"
+    assert cfg["remote_realtime_asr_model"] == "qwen3-asr-flash-realtime"
     assert cfg["max_speech_duration"] == 8.0
     assert cfg["max_record_time"] == 8.0
 
@@ -50,4 +66,10 @@ def test_save_is_atomic_and_roundtrips(tmp_path):
     with open(p, encoding="utf-8") as f:
         loaded = json.load(f)
     assert loaded["translation"]["game_hint"] == "测试杂谈"
+    assert loaded["translation"]["subtitle_send_mode"] == DEFAULT_CONFIG["subtitle_send_mode"]
+    assert loaded["translation"]["subtitle_min_interval"] == DEFAULT_CONFIG["subtitle_min_interval"]
+    assert loaded["asr"]["dashscope_api_key"] == DEFAULT_CONFIG["dashscope_api_key"]
+    assert loaded["asr"]["remote_asr_model"] == DEFAULT_CONFIG["remote_asr_model"]
+    assert loaded["asr"]["remote_realtime_asr_model"] == DEFAULT_CONFIG["remote_realtime_asr_model"]
+    assert loaded["vad"]["vad_device"] == "cpu"
     assert "vad" in loaded

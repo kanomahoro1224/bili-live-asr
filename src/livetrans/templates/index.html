@@ -20,10 +20,16 @@
         .profile-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 120px; }
         .room-pill { max-width: 220px; }
         .room-name { max-width: 150px; }
+        .room-quick-edit { display: flex; align-items: center; gap: 6px; }
+        .room-id-input { width: 92px; height: 34px; border: 1px solid #e5e7eb; border-radius: 8px; padding: 0 10px; font-size: 13px; font-weight: 600; color: #374151; outline: none; }
+        .room-id-input:focus { border-color: #c7d2fe; box-shadow: 0 0 0 2px rgba(79, 70, 229, 0.08); }
+        .room-save-state { min-width: 26px; color: #6b7280; font-size: 12px; font-weight: 700; }
         .status-dot { width: 8px; height: 8px; border-radius: 50%; background: #d1d5db; }
         .status-dot.active { background: #10b981; box-shadow: 0 0 5px #10b981; }
         .nav-btn { background: transparent; border: 1px solid #e5e7eb; padding: 6px 12px; border-radius: 6px; cursor: pointer; font-size: 13px; font-weight: 600; color: #4b5563; display: flex; align-items: center; gap: 6px; }
         .nav-btn:hover { background: #f3f4f6; color: var(--primary); }
+        .mode-select { height: 34px; border: 1px solid #e5e7eb; border-radius: 6px; background: #fff; color: #374151; font-size: 13px; font-weight: 700; padding: 0 8px; outline: none; }
+        .mode-select.auto { border-color: #86efac; color: #15803d; background: #f0fdf4; }
         .container { display: flex; padding: 15px; height: calc(100vh - 50px); width: 100%; }
         .player-wrapper { flex: 0 0 60%; background: #000; border-radius: 12px; overflow: hidden; min-width: 300px; max-width: 90%; display: flex; }
         .player-wrapper iframe { width: 100%; height: 100%; border: none; }
@@ -92,6 +98,8 @@
         @media (max-width: 800px) {
             .container { flex-direction: column; }
             .room-pill { display: none; }
+            .room-id-input { width: 78px; }
+            .room-save-state { display: none; }
             .profile-name { max-width: 84px; }
             .modal-box { flex-direction: column; height: 90vh; }
             .sidebar { width: 100%; flex-direction: row; overflow-x: auto; border-right: none; border-bottom: 1px solid #e5e7eb; padding: 0; }
@@ -113,8 +121,16 @@
                 <span class="profile-avatar"><img id="biliRoomAvatar" alt=""><span id="biliRoomFallback">播</span></span>
                 <span class="profile-name room-name" id="biliRoomName">直播间</span>
             </div>
+            <div class="room-quick-edit" title="输入直播间房间号，按 Enter 保存">
+                <input id="biliRoomIdInput" class="room-id-input" inputmode="numeric" placeholder="房间号" onkeydown="if(event.key==='Enter') saveRoomId()">
+                <span class="room-save-state" id="biliRoomSaveState"></span>
+            </div>
         </div>
         <div style="display:flex;gap:8px;align-items:center">
+            <select id="subtitleModeSelect" class="mode-select" title="字幕发送模式" onchange="setSubtitleMode(this.value)">
+                <option value="manual">手动</option>
+                <option value="auto">自动</option>
+            </select>
             <button class="nav-btn" onclick="exportData('csv')">CSV</button>
             <button class="nav-btn" onclick="exportData('json')">JSON</button>
             <button class="nav-btn" onclick="openModal()">控制台</button>
@@ -177,14 +193,27 @@
                     <button onclick="toggleRun()" id="runBtn" style="width:100%; padding:14px; background:#10b981; color:white; border:none; border-radius:8px; font-weight:bold; margin-bottom:25px; cursor:pointer;"><span>启动同传</span></button>
 
                     <div style="background:#f8fafc; padding:15px; border-radius:8px; margin-bottom:20px; border:1px solid #e2e8f0;">
-                        <div style="font-weight:bold; color:#1e293b; margin-bottom:10px; font-size:14px;">本地 ASR</div>
+                        <div style="font-weight:bold; color:#1e293b; margin-bottom:10px; font-size:14px;">ASR</div>
                         <div class="form-group">
+                            <label class="form-label">ASR 引擎</label>
+                            <select id="set_asr_engine" class="form-input" onchange="toggleAsrSettings()">
+                                <option value="local_asr">本地 ASR</option>
+                                <option value="remote_asr">远程 ASR</option>
+                                <option value="remote_realtime_asr">远程实时 ASR（不适用 VAD）</option>
+                            </select>
+                            <div class="form-helper">本地 ASR 使用本机模型；远程 ASR 按 VAD 段落提交；远程实时 ASR 使用实时连接。</div>
+                        </div>
+                        <div class="form-group" id="localAsrSettings">
                             <label class="form-label">推理设备</label>
                             <select id="set_asr_device" class="form-input">
-                                <option value="cuda">GPU (CUDA，推荐)</option>
+                                <option value="cuda">CUDA 默认 GPU（推荐）</option>
+                                <option value="cuda:0">GPU 0</option>
+                                <option value="cuda:1">GPU 1</option>
+                                <option value="cuda:2">GPU 2</option>
+                                <option value="cuda:3">GPU 3</option>
                                 <option value="cpu">CPU（较慢）</option>
                             </select>
-                            <div class="form-helper">本地 ASR 模型推理设备，GPU 通常更快。</div>
+                            <div class="form-helper">仅本地 ASR 使用；VAD 默认固定走 CPU。</div>
                         </div>
                         <div class="form-group">
                             <label class="form-label">识别语言</label>
@@ -196,6 +225,36 @@
                                 <option value="ko">韩语 (Korean)</option>
                             </select>
                             <div class="form-helper">使用 auto 时会自动判断语种。</div>
+                        </div>
+                        <div id="remoteCommonSettings">
+                            <div class="form-group">
+                                <label class="form-label">DashScope API Key</label>
+                                <input type="password" id="set_dashscope_api_key" class="form-input" placeholder="sk-..." />
+                            </div>
+                        </div>
+                        <div id="remoteAsrSettings">
+                            <div class="form-group">
+                                <label class="form-label">远程 ASR 模型</label>
+                                <input id="set_remote_asr_model" class="form-input" placeholder="paraformer-realtime-v2" />
+                            </div>
+                            <div class="form-group">
+                                <label class="form-label">远程 ASR 超时（秒）</label>
+                                <input type="number" id="set_remote_asr_timeout" class="form-input" step="0.5" min="1" placeholder="8" />
+                            </div>
+                        </div>
+                        <div id="remoteRealtimeAsrSettings">
+                            <div class="form-group">
+                                <label class="form-label">远程实时 ASR 模型</label>
+                                <input id="set_remote_realtime_asr_model" class="form-input" placeholder="qwen3-asr-flash-realtime" />
+                            </div>
+                            <div class="form-group">
+                                <label class="form-label">远程实时 ASR URL</label>
+                                <input id="set_remote_realtime_asr_url" class="form-input" placeholder="wss://dashscope.aliyuncs.com/api-ws/v1/realtime" />
+                            </div>
+                            <div class="form-group">
+                                <label class="form-label">远程实时 ASR 超时（秒）</label>
+                                <input type="number" id="set_remote_realtime_asr_timeout" class="form-input" step="0.5" min="1" placeholder="8" />
+                            </div>
                         </div>
                     </div>
 
@@ -236,18 +295,10 @@
                         </div>
                     </div>
 
-                    <div class="form-group">
-                        <label class="form-label">直播间 URL</label>
-                        <input id="set_bili_room_url" class="form-input" />
-                    </div>
-                    <div class="form-group">
-                        <label class="form-label">直播间 Room ID（用于弹幕）</label>
-                        <input id="set_bili_room_id" class="form-input" />
-                    </div>
                 </div>
 
                 <div id="tab-vad" class="tab-content">
-                    <div class="form-helper" style="margin-bottom:15px;">本地版使用 Silero VAD 切分语音段。</div>
+                    <div class="form-helper" style="margin-bottom:15px;">本地 ASR 和远程 ASR 使用 Silero VAD 切分语音段；远程实时 ASR 不适用 VAD。</div>
                     <div class="form-group">
                         <label class="form-label">触发阈值 (VAD Threshold)</label>
                         <input type="number" id="set_vad_threshold" class="form-input" step="0.05" min="0.1" max="0.95" />
@@ -337,6 +388,32 @@
         b.scrollTop = b.scrollHeight;
         setJumpBottomVisible(false);
     }
+    function applySubtitleMode(mode) {
+        const select = document.getElementById('subtitleModeSelect');
+        select.value = mode === 'auto' ? 'auto' : 'manual';
+        select.classList.toggle('auto', select.value === 'auto');
+    }
+    async function loadSubtitleMode() {
+        try {
+            const data = await (await fetch('/subtitle/mode')).json();
+            if(data.ok) applySubtitleMode(data.mode);
+        } catch(e) {}
+    }
+    async function setSubtitleMode(mode) {
+        applySubtitleMode(mode);
+        try {
+            const data = await (await fetch('/subtitle/mode', {
+                method:'POST',
+                headers:{'Content-Type':'application/json'},
+                body:JSON.stringify({mode})
+            })).json();
+            if(!data.ok) throw new Error(data.error || '保存失败');
+            applySubtitleMode(data.mode);
+        } catch(e) {
+            applySubtitleMode('manual');
+            alert(e.message || '字幕模式保存失败');
+        }
+    }
     document.getElementById('transBox').addEventListener('scroll', () => {
         if (isTranslationsAtBottom()) setJumpBottomVisible(false);
     });
@@ -360,6 +437,7 @@
     window.onload = async () => {
         try {
             loadBiliProfile();
+            loadSubtitleMode();
             setRunBtn((await (await fetch('/status')).json()).running);
             const h = await (await fetch('/latest')).json();
             const b = document.getElementById('transBox');
@@ -372,6 +450,10 @@
     function profileAvatarUrl(url) {
         if(!url) return '';
         return '/bili/avatar?url=' + encodeURIComponent(url);
+    }
+    function playerUrl(roomId) {
+        const id = String(roomId || '').trim() || '15152878';
+        return `https://www.bilibili.com/blackboard/live/live-activity-player.html?cid=${encodeURIComponent(id)}&logo=0&mute=0`;
     }
     function setProfileAvatar(imgId, fallbackId, url, fallbackText) {
         const img = document.getElementById(imgId);
@@ -394,13 +476,43 @@
             if(!data.ok) return;
             const account = data.account || {};
             const room = data.room || {};
+            const roomId = data.room_id || '';
             biliLoggedIn = !!account.logged_in;
             document.getElementById('biliAccountName').innerText = account.name || '点击登录';
             setProfileAvatar('biliAccountAvatar', 'biliAccountFallback', account.avatar, biliLoggedIn ? '账' : '?');
             document.getElementById('biliAccount').title = biliLoggedIn ? '当前 Bilibili 账号' : '点击登录 Bilibili';
             document.getElementById('biliRoomName').innerText = room.name || '直播间';
             setProfileAvatar('biliRoomAvatar', 'biliRoomFallback', room.avatar, '播');
+            document.getElementById('biliRoomIdInput').value = roomId;
+            if(roomId) document.getElementById('liveFrame').src = playerUrl(roomId);
         } catch(e) {}
+    }
+
+    async function saveRoomId() {
+        const input = document.getElementById('biliRoomIdInput');
+        const state = document.getElementById('biliRoomSaveState');
+        const roomId = input.value.trim();
+        if(!/^\d+$/.test(roomId)) {
+            state.innerText = '错';
+            return;
+        }
+        state.innerText = '...';
+        try {
+            const data = await (await fetch('/bili/room', {
+                method:'POST',
+                headers:{'Content-Type':'application/json'},
+                body:JSON.stringify({room_id:roomId})
+            })).json();
+            if(!data.ok) throw new Error(data.error || '保存失败');
+            const room = data.room || {};
+            document.getElementById('biliRoomName').innerText = room.name || '直播间';
+            setProfileAvatar('biliRoomAvatar', 'biliRoomFallback', room.avatar, '播');
+            document.getElementById('liveFrame').src = playerUrl(roomId);
+            state.innerText = 'OK';
+            setTimeout(()=>{ if(state.innerText === 'OK') state.innerText = ''; }, 1500);
+        } catch(e) {
+            state.innerText = '错';
+        }
     }
 
     async function openBiliLogin() {
@@ -491,11 +603,52 @@
     }
     function removeBanWord(i){ bannedTags.splice(i,1); renderTags(); }
 
+    function toggleAsrSettings() {
+        const engine = document.getElementById('set_asr_engine').value;
+        const isRemote = engine === 'remote_asr' || engine === 'remote_realtime_asr';
+        document.getElementById('localAsrSettings').style.display = engine === 'local_asr' ? 'block' : 'none';
+        document.getElementById('remoteCommonSettings').style.display = isRemote ? 'block' : 'none';
+        document.getElementById('remoteAsrSettings').style.display = engine === 'remote_asr' ? 'block' : 'none';
+        document.getElementById('remoteRealtimeAsrSettings').style.display = engine === 'remote_realtime_asr' ? 'block' : 'none';
+    }
+
+    async function loadAsrDevices(selected) {
+        const select = document.getElementById('set_asr_device');
+        try {
+            const data = await (await fetch('/asr/devices')).json();
+            if(data.ok && Array.isArray(data.devices) && data.devices.length) {
+                select.innerHTML = '';
+                data.devices.forEach(d => {
+                    const option = document.createElement('option');
+                    option.value = d.value;
+                    option.innerText = d.label;
+                    select.appendChild(option);
+                });
+            }
+        } catch(e) {}
+        if(selected && !Array.from(select.options).some(o => o.value === selected)) {
+            const option = document.createElement('option');
+            option.value = selected;
+            option.innerText = selected;
+            select.appendChild(option);
+        }
+        select.value = selected || 'cuda';
+    }
+
     function openModal() {
         document.getElementById('settingsModal').style.display = 'flex';
         fetch('/settings').then(r=>r.json()).then(c => {
-            document.getElementById('set_asr_device').value = c.asr_device||'cuda';
+            const asrEngine = c.asr_engine === 'qwen_asr' ? 'remote_realtime_asr'
+                : (c.asr_engine === 'kotoba_whisper' || c.asr_engine === 'local_sensevoice' ? 'local_asr' : (c.asr_engine||'local_asr'));
+            document.getElementById('set_asr_engine').value = asrEngine;
+            loadAsrDevices(c.asr_device||'cuda');
             document.getElementById('set_asr_language').value = c.asr_language||'auto';
+            document.getElementById('set_dashscope_api_key').value = c.dashscope_api_key||'';
+            document.getElementById('set_remote_asr_model').value = c.remote_asr_model||'paraformer-realtime-v2';
+            document.getElementById('set_remote_asr_timeout').value = c.remote_asr_timeout||8;
+            document.getElementById('set_remote_realtime_asr_model').value = c.remote_realtime_asr_model||c.remote_asr_model||'qwen3-asr-flash-realtime';
+            document.getElementById('set_remote_realtime_asr_url').value = c.remote_realtime_asr_url||c.remote_asr_url||'wss://dashscope.aliyuncs.com/api-ws/v1/realtime';
+            document.getElementById('set_remote_realtime_asr_timeout').value = c.remote_realtime_asr_timeout||c.remote_asr_timeout||8;
             document.getElementById('set_game_hint').value = c.game_hint||'';
             document.getElementById('set_prompt_extra').value = c.prompt_extra||'';
             document.getElementById('set_llm_base_url').value = c.llm_base_url||'https://api.openai.com/v1';
@@ -503,14 +656,13 @@
             document.getElementById('set_llm_model').value = c.llm_model||'gpt-4.1-mini';
             document.getElementById('set_use_translation_context').value = c.use_translation_context !== false ? 'true' : 'false';
             document.getElementById('set_context_window_size').value = c.context_window_size||5;
-            document.getElementById('set_bili_room_url').value = c.bili_room_url||'';
-            document.getElementById('set_bili_room_id').value = c.bili_room_id||'';
             document.getElementById('set_vad_threshold').value = c.vad_threshold||0.5;
             document.getElementById('set_min_speech_duration').value = c.min_speech_duration||1.0;
             document.getElementById('set_max_record_time').value = c.max_record_time||8;
             const raw = c.banned_words || "";
             bannedTags = raw.replace(/，/g, ',').split(',').map(s => s.trim()).filter(s => s);
             renderTags();
+            toggleAsrSettings();
         });
         switchTab('general', document.querySelector('.tab-btn'));
     }
@@ -519,8 +671,15 @@
 
     async function saveSettings() {
         await fetch('/settings', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({
+            asr_engine: document.getElementById('set_asr_engine').value,
             asr_device: document.getElementById('set_asr_device').value,
             asr_language: document.getElementById('set_asr_language').value,
+            dashscope_api_key: document.getElementById('set_dashscope_api_key').value,
+            remote_asr_model: document.getElementById('set_remote_asr_model').value,
+            remote_asr_timeout: parseFloat(document.getElementById('set_remote_asr_timeout').value) || 8,
+            remote_realtime_asr_model: document.getElementById('set_remote_realtime_asr_model').value,
+            remote_realtime_asr_url: document.getElementById('set_remote_realtime_asr_url').value,
+            remote_realtime_asr_timeout: parseFloat(document.getElementById('set_remote_realtime_asr_timeout').value) || 8,
             game_hint: document.getElementById('set_game_hint').value,
             prompt_extra: document.getElementById('set_prompt_extra').value,
             llm_base_url: document.getElementById('set_llm_base_url').value,
@@ -528,8 +687,6 @@
             llm_model: document.getElementById('set_llm_model').value,
             use_translation_context: document.getElementById('set_use_translation_context').value === 'true',
             context_window_size: parseInt(document.getElementById('set_context_window_size').value) || 5,
-            bili_room_url: document.getElementById('set_bili_room_url').value,
-            bili_room_id: document.getElementById('set_bili_room_id').value,
             vad_threshold: parseFloat(document.getElementById('set_vad_threshold').value),
             min_speech_duration: parseFloat(document.getElementById('set_min_speech_duration').value),
             max_record_time: parseFloat(document.getElementById('set_max_record_time').value),

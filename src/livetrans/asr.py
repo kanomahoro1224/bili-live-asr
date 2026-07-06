@@ -1,7 +1,13 @@
+import base64
 import logging
 import os
+import queue
 import re
+import tempfile
+import threading
+import wave
 from contextlib import nullcontext
+from http import HTTPStatus
 from pathlib import Path
 
 import numpy as np
@@ -72,7 +78,7 @@ class KotobaWhisperEngine:
         except Exception as e:
             log.warning(f"Kotoba model download warning, trying local cache: {e}")
 
-        use_gpu = self.device in ("cuda", "mps")
+        use_gpu = self.device.startswith("cuda") or self.device == "mps"
         self._pipe = pipeline(
             "automatic-speech-recognition",
             model=str(self.model_dir),
@@ -103,7 +109,14 @@ class KotobaWhisperEngine:
         if device.startswith("cuda"):
             if not torch.cuda.is_available():
                 raise RuntimeError("未检测到 CUDA，Kotoba Whisper 当前配置要求 asr_device=cuda")
-            return "cuda"
+            if ":" in device:
+                try:
+                    index = int(device.split(":", 1)[1])
+                except ValueError as e:
+                    raise RuntimeError(f"无效 CUDA 设备: {device}") from e
+                if index < 0 or index >= torch.cuda.device_count():
+                    raise RuntimeError(f"CUDA 设备不存在: {device}")
+            return device
         if device == "mps":
             if not torch.backends.mps.is_available():
                 raise RuntimeError("未检测到 Apple Silicon MPS")
@@ -330,3 +343,211 @@ class SenseVoiceEngine:
             "language": detected_lang,
             "language_name": detected_lang,
         }
+
+
+class QwenRealtimeEngine:
+    """Remote DashScope Qwen realtime ASR with the local ASR transcribe interface."""
+
+    def __init__(
+        self,
+        api_key: str,
+        language: str = "ja",
+        model: str = "qwen3-asr-flash-realtime",
+        url: str = "wss://dashscope.aliyuncs.com/api-ws/v1/realtime",
+        timeout: float = 8.0,
+    ):
+        if not api_key:
+            raise RuntimeError("Qwen ASR requires dashscope_api_key")
+        from dashscope.audio.qwen_omni import (
+            MultiModality,
+            OmniRealtimeCallback,
+            OmniRealtimeConversation,
+        )
+        from dashscope.audio.qwen_omni.omni_realtime import TranscriptionParams
+        import dashscope
+
+        self.api_key = api_key
+        self.language = language
+        self.model = model
+        self.url = url
+        self.timeout = float(timeout)
+        self._MultiModality = MultiModality
+        self._TranscriptionParams = TranscriptionParams
+        self._lock = threading.Lock()
+        self._results: queue.Queue[str] = queue.Queue()
+        dashscope.api_key = api_key
+
+        engine = self
+
+        class _Callback(OmniRealtimeCallback):
+            def on_open(self):
+                log.info("Qwen ASR connected")
+
+            def on_close(self, code, msg):
+                log.info(f"Qwen ASR closed: code={code}, msg={msg}")
+
+            def on_event(self, response):
+                event_type = response.get("type")
+                if event_type == "conversation.item.input_audio_transcription.completed":
+                    text = str(response.get("transcript") or "").strip()
+                    if text:
+                        engine._results.put(text)
+
+        self._conversation = OmniRealtimeConversation(
+            model=self.model,
+            url=self.url,
+            callback=_Callback(),
+        )
+        self._conversation.connect()
+        self._update_session()
+        log.info(f"Qwen ASR loaded: model={self.model}, language={self.language}")
+
+    def _update_session(self):
+        params = self._TranscriptionParams(
+            language=self.language if self.language != "auto" else "ja",
+            sample_rate=SAMPLE_RATE,
+            input_audio_format="pcm",
+        )
+        self._conversation.update_session(
+            output_modalities=[self._MultiModality.TEXT],
+            enable_input_audio_transcription=True,
+            transcription_params=params,
+        )
+
+    def set_language(self, language: str):
+        self.language = language or "ja"
+        try:
+            self._update_session()
+        except Exception as e:
+            log.warning(f"Qwen ASR language update failed: {e}")
+
+    def unload(self):
+        try:
+            self._conversation.close()
+        except Exception:
+            pass
+
+    def transcribe(self, audio: np.ndarray) -> dict | None:
+        if audio is None or audio.size == 0:
+            return None
+        with self._lock:
+            while not self._results.empty():
+                try:
+                    self._results.get_nowait()
+                except queue.Empty:
+                    break
+
+            tail_silence = np.zeros(int(SAMPLE_RATE * 0.35), dtype=np.int16).tobytes()
+            self._conversation.append_audio(self._encode_audio(audio, tail_silence))
+
+            try:
+                text = self._results.get(timeout=self.timeout)
+            except queue.Empty:
+                return None
+            text = re.sub(r"\s+", " ", text).strip()
+            if not text:
+                return None
+            return {"text": text, "language": self.language, "language_name": self.language}
+
+    def transcribe_stream_frame(self, audio: np.ndarray) -> list[dict]:
+        if audio is None or audio.size == 0:
+            return []
+        with self._lock:
+            self._conversation.append_audio(self._encode_audio(audio))
+            return [
+                {"text": text, "language": self.language, "language_name": self.language}
+                for text in self._drain_results()
+            ]
+
+    def _drain_results(self) -> list[str]:
+        results: list[str] = []
+        while True:
+            try:
+                text = self._results.get_nowait()
+            except queue.Empty:
+                break
+            text = re.sub(r"\s+", " ", text).strip()
+            if text:
+                results.append(text)
+        return results
+
+    def _encode_audio(self, audio: np.ndarray, suffix: bytes = b"") -> str:
+        pcm = np.clip(audio.astype(np.float32, copy=False), -1.0, 1.0)
+        pcm16 = (pcm * 32767.0).astype(np.int16).tobytes()
+        return base64.b64encode(pcm16 + suffix).decode("ascii")
+
+
+class DashScopeRemoteEngine:
+    """Remote DashScope ASR for one completed VAD segment at a time."""
+
+    def __init__(
+        self,
+        api_key: str,
+        language: str = "ja",
+        model: str = "paraformer-realtime-v2",
+        timeout: float = 8.0,
+    ):
+        if not api_key:
+            raise RuntimeError("Remote ASR requires dashscope_api_key")
+        from dashscope.audio.asr.recognition import Recognition
+        import dashscope
+
+        dashscope.api_key = api_key
+        self.api_key = api_key
+        self.language = language or "auto"
+        self.model = model
+        self.timeout = float(timeout)
+        self._Recognition = Recognition
+        log.info(f"DashScope remote ASR loaded: model={self.model}")
+
+    def set_language(self, language: str):
+        self.language = language or "auto"
+
+    def transcribe(self, audio: np.ndarray) -> dict | None:
+        if audio is None or audio.size == 0:
+            return None
+
+        path = self._write_temp_wav(audio)
+        try:
+            recognizer = self._Recognition(
+                model=self.model,
+                callback=None,
+                format="wav",
+                sample_rate=SAMPLE_RATE,
+            )
+            result = recognizer.call(path)
+        finally:
+            try:
+                os.remove(path)
+            except OSError:
+                pass
+
+        if getattr(result, "status_code", None) != HTTPStatus.OK:
+            code = getattr(result, "code", "")
+            message = getattr(result, "message", "")
+            raise RuntimeError(f"Remote ASR failed: {code} {message}".strip())
+
+        sentences = result.get_sentence()
+        if isinstance(sentences, dict):
+            texts = [sentences.get("text", "")]
+        elif isinstance(sentences, list):
+            texts = [str(s.get("text", "")) for s in sentences if isinstance(s, dict)]
+        else:
+            texts = []
+
+        text = re.sub(r"\s+", " ", " ".join(t for t in texts if t).strip())
+        if not text:
+            return None
+        return {"text": text, "language": self.language, "language_name": self.language}
+
+    def _write_temp_wav(self, audio: np.ndarray) -> str:
+        pcm = np.clip(audio.astype(np.float32, copy=False), -1.0, 1.0)
+        pcm16 = (pcm * 32767.0).astype(np.int16)
+        fd, path = tempfile.mkstemp(suffix=".wav")
+        os.close(fd)
+        with wave.open(path, "wb") as f:
+            f.setnchannels(1)
+            f.setsampwidth(2)
+            f.setframerate(SAMPLE_RATE)
+            f.writeframes(pcm16.tobytes())
+        return path

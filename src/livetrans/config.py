@@ -1,8 +1,8 @@
 """配置加载/保存与默认值（纯逻辑，不依赖 torch / 网络 / flask）。
 
 运行时配置以 JSON 落盘（config.json）。load_config 把磁盘值与 DEFAULT_CONFIG
-合并、补齐缺键；save_config 原子写盘防崩溃损坏。本地 ASR 版默认引擎为
-kotoba_whisper，相较在线 Qwen 版去掉 dashscope_api_key、新增 asr_device。
+合并、补齐缺键；save_config 原子写盘防崩溃损坏。默认引擎为本地
+kotoba_whisper，同时保留远程 Qwen/DashScope ASR 配置。
 """
 
 from __future__ import annotations
@@ -28,7 +28,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "bili_cookie": "",
     "bili_csrf": "",
     # ASR 引擎：KITS-main 同款 Kotoba Whisper
-    "asr_engine": "kotoba_whisper",
+    "asr_engine": "local_asr",
     "asr_model_id": "kotoba-tech/kotoba-whisper-v2.2",
     "asr_model_dir": "models/kotoba-whisper-v2.2",
     "asr_device": "cuda",                 # cuda / cpu
@@ -38,8 +38,15 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "asr_batch_size": 8,
     "asr_stride_left_s": 5,
     "asr_stride_right_s": 3,
+    "dashscope_api_key": "",
+    "remote_asr_model": "paraformer-realtime-v2",
+    "remote_asr_timeout": 8.0,
+    "remote_realtime_asr_model": "qwen3-asr-flash-realtime",
+    "remote_realtime_asr_url": "wss://dashscope.aliyuncs.com/api-ws/v1/realtime",
+    "remote_realtime_asr_timeout": 8.0,
     # VAD & 过滤参数
     "vad_threshold": 0.5,                 # Silero 触发阈值
+    "vad_device": "cpu",
     "min_silence_duration": 0.6,          # 固定静音切分时长（秒）
     "min_speech_duration": 1.0,           # 最短语音段（秒）
     "max_speech_duration": 8.0,           # 最长语音段（秒），超时回溯切分
@@ -51,6 +58,9 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "llm_base_url": "https://api.openai.com/v1",
     "llm_api_key": "",
     "llm_model": "gpt-4.1-mini",
+    # 字幕发送模式
+    "subtitle_send_mode": "manual",       # manual / auto
+    "subtitle_min_interval": 2.0,
     # 安全设置
     "log_security_events": True,
     # 翻译上下文设置
@@ -76,12 +86,19 @@ CONFIG_SECTIONS: tuple[tuple[str, tuple[str, ...]], ...] = (
             "asr_batch_size",
             "asr_stride_left_s",
             "asr_stride_right_s",
+            "dashscope_api_key",
+            "remote_asr_model",
+            "remote_asr_timeout",
+            "remote_realtime_asr_model",
+            "remote_realtime_asr_url",
+            "remote_realtime_asr_timeout",
         ),
     ),
     (
         "vad",
         (
             "vad_threshold",
+            "vad_device",
             "min_speech_duration",
             "max_speech_duration",
             "silence_mode",
@@ -97,6 +114,8 @@ CONFIG_SECTIONS: tuple[tuple[str, tuple[str, ...]], ...] = (
             "llm_base_url",
             "llm_api_key",
             "llm_model",
+            "subtitle_send_mode",
+            "subtitle_min_interval",
             "use_translation_context",
             "context_window_size",
             "max_context_buffer",
@@ -111,7 +130,7 @@ _LEGACY_WRITE_SKIP = {
     "min_silence_duration",
     "deepseek_key",
     "deepseek_model",
-    "dashscope_api_key",
+    "remote_asr_url",
     "use_vad",
     "no_speech_threshold",
     "min_avg_logprob",

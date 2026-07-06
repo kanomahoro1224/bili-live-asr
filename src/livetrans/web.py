@@ -103,6 +103,47 @@ def create_web(state):
     def status():
         return jsonify({"running": state.is_running})
 
+    @app.route("/subtitle/mode", methods=["GET", "POST"])
+    def subtitle_mode():
+        if not session.get("logged_in"):
+            return jsonify({"ok": False, "error": "未授权"}), 403
+        if request.method == "GET":
+            with state.config_lock:
+                return jsonify(
+                    {
+                        "ok": True,
+                        "mode": config.get("subtitle_send_mode", "manual"),
+                        "min_interval": config.get("subtitle_min_interval", 2.0),
+                    }
+                )
+        mode = str((request.json or {}).get("mode", "")).strip()
+        if mode not in {"manual", "auto"}:
+            return jsonify({"ok": False, "error": "无效字幕模式"}), 400
+        with state.config_lock:
+            config["subtitle_send_mode"] = mode
+            config["subtitle_min_interval"] = 2.0
+            save_config(state.config_path, config)
+        log("Subtitle", f"字幕发送模式: {mode}")
+        return jsonify({"ok": True, "mode": mode, "min_interval": 2.0})
+
+    @app.route("/asr/devices")
+    def asr_devices():
+        if not session.get("logged_in"):
+            return jsonify({"ok": False, "error": "未授权"}), 403
+        devices = [{"value": "cuda", "label": "CUDA 默认 GPU"}, {"value": "cpu", "label": "CPU"}]
+        try:
+            import torch
+
+            if torch.cuda.is_available():
+                devices = [{"value": "cuda", "label": "CUDA 默认 GPU"}]
+                for index in range(torch.cuda.device_count()):
+                    name = torch.cuda.get_device_name(index)
+                    devices.append({"value": f"cuda:{index}", "label": f"GPU {index}: {name}"})
+                devices.append({"value": "cpu", "label": "CPU"})
+        except Exception:
+            pass
+        return jsonify({"ok": True, "devices": devices})
+
     @app.route("/logs")
     def get_logs():
         if not session.get("logged_in"):
@@ -113,11 +154,34 @@ def create_web(state):
     def bili_profile():
         if not session.get("logged_in"):
             return jsonify({"ok": False, "error": "未授权"}), 403
+        with state.config_lock:
+            room_id = config.get("bili_room_id", "")
         return jsonify(
             {
                 "ok": True,
                 "account": bili.get_account_profile(cookie_file),
-                "room": bili.get_room_profile(config.get("bili_room_id", "")),
+                "room": bili.get_room_profile(room_id),
+                "room_id": room_id,
+            }
+        )
+
+    @app.route("/bili/room", methods=["POST"])
+    def bili_room():
+        if not session.get("logged_in"):
+            return jsonify({"ok": False, "error": "未授权"}), 403
+        room_id = str((request.json or {}).get("room_id", "")).strip()
+        if not room_id.isdigit():
+            return jsonify({"ok": False, "error": "房间号只能是数字"}), 400
+        with state.config_lock:
+            config["bili_room_id"] = room_id
+            config["bili_room_url"] = f"https://live.bilibili.com/{room_id}"
+            save_config(state.config_path, config)
+        state.stream_reload_event.set()
+        return jsonify(
+            {
+                "ok": True,
+                "room_id": room_id,
+                "room": bili.get_room_profile(room_id),
             }
         )
 
@@ -192,30 +256,32 @@ def create_web(state):
         if not session.get("logged_in"):
             return jsonify({"ok": False, "error": "未授权"}), 403
         if request.method == "GET":
-            return jsonify(config)
+            with state.config_lock:
+                return jsonify(dict(config))
         new_data = request.json or {}
         allowed = set(DEFAULT_CONFIG.keys())
         reload_asr = False
-        for k, v in new_data.items():
-            if k not in allowed:
-                continue
-            default = DEFAULT_CONFIG[k]
-            if isinstance(default, bool):
-                v = bool(v)
-            elif isinstance(default, (int, float)):
-                try:
-                    v = type(default)(v)
-                except (ValueError, TypeError):
+        with state.config_lock:
+            for k, v in new_data.items():
+                if k not in allowed:
                     continue
-            elif isinstance(default, str):
-                if not (isinstance(v, str) and len(v) < 10000):
-                    continue
-            if k == "max_record_time":
-                config["max_speech_duration"] = v
-            if _is_asr_reload_key(k) and v != config.get(k):
-                reload_asr = True
-            config[k] = v
-        save_config(state.config_path, config)
+                default = DEFAULT_CONFIG[k]
+                if isinstance(default, bool):
+                    v = bool(v)
+                elif isinstance(default, (int, float)):
+                    try:
+                        v = type(default)(v)
+                    except (ValueError, TypeError):
+                        continue
+                elif isinstance(default, str):
+                    if not (isinstance(v, str) and len(v) < 10000):
+                        continue
+                if k == "max_record_time":
+                    config["max_speech_duration"] = v
+                if _is_asr_reload_key(k) and v != config.get(k):
+                    reload_asr = True
+                config[k] = v
+            save_config(state.config_path, config)
         if reload_asr:
             state.reload_event.set()
             log("Config", "ASR/VAD 配置已更新，将在下次循环重载")
@@ -230,7 +296,9 @@ def create_web(state):
             return jsonify({"ok": False, "error": "内容为空"})
         if len(text) > 200:
             return jsonify({"ok": False, "error": "内容过长，最多 200 字符"})
-        return jsonify(security.send_danmu(text, config, cookie_file))
+        with state.config_lock:
+            send_config = dict(config)
+        return jsonify(security.send_danmu(text, send_config, cookie_file))
 
     return app, socketio
 
@@ -246,7 +314,14 @@ def _is_asr_reload_key(key: str) -> bool:
         "asr_batch_size",
         "asr_stride_left_s",
         "asr_stride_right_s",
+        "dashscope_api_key",
+        "remote_asr_model",
+        "remote_asr_timeout",
+        "remote_realtime_asr_model",
+        "remote_realtime_asr_url",
+        "remote_realtime_asr_timeout",
         "vad_threshold",
+        "vad_device",
         "min_speech_duration",
         "max_record_time",
         "max_speech_duration",
