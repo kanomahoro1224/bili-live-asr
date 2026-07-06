@@ -21,6 +21,9 @@ __all__ = [
 
 DEFAULT_CONFIG: dict[str, Any] = {
     "web_password": "admin",
+    "theme_color": "#4f46e5",
+    "streamer_type": "Vtuber",
+    "streamer_name": "鹿乃",
     "game_hint": "杂谈",
     "prompt_extra": "",
     "bili_room_url": "https://live.bilibili.com/000000",
@@ -54,6 +57,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "silence_mode": "auto",               # auto / fixed
     "silence_duration": 0.8,              # fixed 模式下的静音切分时长（秒）
     "banned_words": "視聴, 字幕, MBC, Music, music, BGM, VIDEO, WATCH, Subscribe",
+    "filter_games": "",
     # OpenAI-compatible LLM API
     "llm_base_url": "https://api.openai.com/v1",
     "llm_api_key": "",
@@ -70,7 +74,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
 }
 
 CONFIG_SECTIONS: tuple[tuple[str, tuple[str, ...]], ...] = (
-    ("web", ("web_password",)),
+    ("web", ("web_password", "theme_color")),
     ("stream", ("bili_room_url", "bili_room_id")),
     ("bilibili_danmu", ("bili_cookie", "bili_csrf")),
     (
@@ -104,12 +108,15 @@ CONFIG_SECTIONS: tuple[tuple[str, tuple[str, ...]], ...] = (
             "silence_mode",
             "silence_duration",
             "banned_words",
+            "filter_games",
         ),
     ),
     (
         "translation",
         (
             "game_hint",
+            "streamer_type",
+            "streamer_name",
             "prompt_extra",
             "llm_base_url",
             "llm_api_key",

@@ -22,6 +22,13 @@ def test_build_prompt_with_context():
     assert "[APEX]" in p
 
 
+def test_build_prompt_uses_streamer_variables():
+    p = build_prompt(["A"], "", "APEX", "", "歌手", "鹿乃")
+    assert "歌手" in p
+    assert "鹿乃" in p
+    assert "Vtuber（鹿乃）" not in p
+
+
 def test_clean_translation_lines_strips_numbering_and_pads():
     out = clean_translation_lines("1. 你好\n2、早上好", expected=3)
     assert out[0] == "你好"

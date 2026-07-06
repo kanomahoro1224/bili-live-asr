@@ -1,6 +1,12 @@
 """filters 模块单测：垃圾词切分、文本过滤、Unicode 清洗。"""
 
-from livetrans.filters import clean_unicode, filter_text, parse_banned_words
+from livetrans.filters import (
+    clean_unicode,
+    filter_text,
+    parse_banned_words,
+    parse_filter_games,
+    resolve_games,
+)
 
 
 def test_parse_banned_words_handles_both_commas():
@@ -27,3 +33,13 @@ def test_filter_text_keeps_normal():
 
 def test_clean_unicode_strips_surrogates():
     assert clean_unicode("ab\ud800c") == "abc"
+
+
+def test_game_callout_filter_drops_exact_supported_callout():
+    callouts = resolve_games(parse_filter_games("valorant"))
+    assert filter_text("残り1名", [], callouts) is None
+    assert filter_text("残り1名 だと思う", [], callouts) == "残り1名 だと思う"
+
+
+def test_game_alias_resolves_valo():
+    assert resolve_games(["valorant"]) == resolve_games(["valo"])

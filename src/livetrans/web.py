@@ -103,6 +103,28 @@ def create_web(state):
     def status():
         return jsonify({"running": state.is_running})
 
+    @app.route("/theme", methods=["GET", "POST"])
+    def theme():
+        if not session.get("logged_in"):
+            return jsonify({"ok": False, "error": "未授权"}), 403
+        if request.method == "GET":
+            with state.config_lock:
+                return jsonify(
+                    {"ok": True, "theme_color": config.get("theme_color", "#4f46e5")}
+                )
+        color = str((request.json or {}).get("theme_color", "")).strip()
+        is_hex = (
+            len(color) == 7
+            and color.startswith("#")
+            and all(ch in "0123456789abcdefABCDEF" for ch in color[1:])
+        )
+        if not is_hex:
+            return jsonify({"ok": False, "error": "无效主题颜色"}), 400
+        with state.config_lock:
+            config["theme_color"] = color
+            save_config(state.config_path, config)
+        return jsonify({"ok": True, "theme_color": color})
+
     @app.route("/subtitle/mode", methods=["GET", "POST"])
     def subtitle_mode():
         if not session.get("logged_in"):

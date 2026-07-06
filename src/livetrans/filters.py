@@ -1,27 +1,107 @@
-"""文本过滤与清洗（纯逻辑，可独立单测）。
-
-负责：垃圾词（banned_words）过滤、ASR 文本基础清洗、无效 Unicode 代理对剔除。
-本地 ASR 单段产出一条文本，filter_text 判定其是否应保留。
-"""
+"""Text cleanup and configurable ASR filters."""
 
 from __future__ import annotations
 
 __all__ = [
-    "parse_banned_words",
     "clean_unicode",
     "filter_text",
+    "is_game_callout",
+    "parse_banned_words",
+    "parse_filter_games",
+    "resolve_games",
+    "supported_games",
 ]
+
+_EDGE_PUNCT = "。.,，、!！?？…・「」『』【】（）()[]{}　 \t\n\r"
+
+
+def _normalize(text: str) -> str:
+    text = (text or "").replace(" ", "").replace("　", "")
+    return text.strip(_EDGE_PUNCT).lower()
+
+
+_RAW_VALORANT_CALLOUTS: tuple[str, ...] = (
+    "アラームボット配置",
+    "アラームボット展開",
+    "グレネード配置",
+    "グレネード配備",
+    "グレネード配置",
+    "グレネード配置完了",
+    "セントリー配置",
+    "セントリー設置",
+    "タレット展開",
+    "サイバーケージ設置",
+    "スパイクを設置",
+    "ドローン展開",
+    "残り1名",
+    "敵残り1名",
+    "最後の一人だ",
+    "最後の1人だ",
+    "お遊びはここまでだ",
+    "対戦を確認",
+    "マッチポイント",
+    "オーバータイムだ",
+    "ディフェンダーの勝利",
+    "アタッカーの勝利",
+    "アルティメットいけるぞ",
+    "スティールビーコンだ",
+    "Aでキャリアダウン",
+    "Bでキャリアダウン",
+    "Cでキャリアダウン",
+    "中央でキャリアダウン",
+    "スポーンでキャリアダウン",
+)
+
+VALORANT_CALLOUTS: frozenset[str] = frozenset(
+    _normalize(text) for text in _RAW_VALORANT_CALLOUTS
+)
+
+GAME_CALLOUTS: dict[str, frozenset[str]] = {
+    "valorant": VALORANT_CALLOUTS,
+}
+
+_GAME_ALIASES: dict[str, str] = {
+    "valorant": "valorant",
+    "valo": "valorant",
+    "瓦": "valorant",
+    "瓦罗兰特": "valorant",
+}
+
+
+def supported_games() -> list[str]:
+    return sorted(_GAME_ALIASES)
 
 
 def parse_banned_words(banned_str: str) -> list[str]:
-    """把配置里的垃圾词字符串切成列表（兼容中英文逗号）。"""
     if not banned_str:
         return []
     return [w.strip() for w in banned_str.replace("，", ",").split(",") if w.strip()]
 
 
+def parse_filter_games(games_str: str) -> list[str]:
+    return parse_banned_words(games_str)
+
+
+def resolve_games(names: list[str]) -> frozenset[str]:
+    merged: set[str] = set()
+    for name in names:
+        raw = str(name or "").strip()
+        if not raw:
+            continue
+        key = _GAME_ALIASES.get(raw.lower())
+        if key is None:
+            raise ValueError(
+                f"不支持的游戏过滤: {raw!r}。当前支持: {', '.join(supported_games())}"
+            )
+        merged |= GAME_CALLOUTS[key]
+    return frozenset(merged)
+
+
+def is_game_callout(text: str, callouts: frozenset[str]) -> bool:
+    return bool(callouts) and _normalize(text) in callouts
+
+
 def clean_unicode(text: str) -> str:
-    """剔除无效的 Unicode 代理对字符（U+D800..U+DFFF）及不可编码字符。"""
     result = []
     for char in text:
         if 0xD800 <= ord(char) <= 0xDFFF:
@@ -34,19 +114,16 @@ def clean_unicode(text: str) -> str:
     return "".join(result)
 
 
-def filter_text(text: str, blacklist: list[str]) -> str | None:
-    """对一条 ASR 文本应用过滤规则；保留则返回清洗后的文本，否则返回 None。
-
-    规则（沿用在线版 get_qwen_asr_results_filtered 的判定）：
-    - 命中垃圾词（不区分大小写）→ 丢弃
-    - 长度 < 2 且非字母数字 → 丢弃
-    - 以 ( （ 【 [ 开头（多为音效/旁白标记）→ 丢弃
-    """
-    text = (text or "").strip()
+def filter_text(
+    text: str, blacklist: list[str], game_callouts: frozenset[str] | None = None
+) -> str | None:
+    text = clean_unicode(text or "").strip()
     if not text:
         return None
     low = text.lower()
     if any(bad.lower() in low for bad in blacklist):
+        return None
+    if is_game_callout(text, game_callouts or frozenset()):
         return None
     if len(text) < 2 and not text.isalnum():
         return None

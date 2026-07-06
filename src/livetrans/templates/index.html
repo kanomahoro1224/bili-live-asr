@@ -26,10 +26,18 @@
         .room-save-state { min-width: 26px; color: #6b7280; font-size: 12px; font-weight: 700; }
         .status-dot { width: 8px; height: 8px; border-radius: 50%; background: #d1d5db; }
         .status-dot.active { background: #10b981; box-shadow: 0 0 5px #10b981; }
-        .nav-btn { background: transparent; border: 1px solid #e5e7eb; padding: 6px 12px; border-radius: 6px; cursor: pointer; font-size: 13px; font-weight: 600; color: #4b5563; display: flex; align-items: center; gap: 6px; }
+        .nav-right { display: flex; gap: 8px; align-items: center; min-width: 0; }
+        .nav-btn { height: 34px; background: transparent; border: 1px solid #e5e7eb; padding: 0 12px; border-radius: 6px; cursor: pointer; font-size: 13px; font-weight: 600; color: #4b5563; display: flex; align-items: center; gap: 6px; }
         .nav-btn:hover { background: #f3f4f6; color: var(--primary); }
-        .mode-select { height: 34px; border: 1px solid #e5e7eb; border-radius: 6px; background: #fff; color: #374151; font-size: 13px; font-weight: 700; padding: 0 8px; outline: none; }
-        .mode-select.auto { border-color: #86efac; color: #15803d; background: #f0fdf4; }
+        .run-btn-top { height: 34px; border: 1px solid #e5e7eb; border-radius: 6px; padding: 0 14px; color: #4b5563; background: transparent; cursor: pointer; font-size: 13px; font-weight: 800; white-space: nowrap; }
+        .run-btn-top:hover { background: #f3f4f6; color: var(--primary); }
+        .run-btn-top.running { background: var(--primary); border-color: var(--primary); color: #fff; }
+        .mode-toggle { height: 34px; display: inline-flex; align-items: center; padding: 3px; border: 1px solid #e5e7eb; border-radius: 8px; background: #f9fafb; gap: 2px; }
+        .mode-option { height: 26px; min-width: 44px; border: none; border-radius: 6px; background: transparent; color: #6b7280; cursor: pointer; font-size: 13px; font-weight: 600; padding: 0 10px; transition: all .15s ease; }
+        .mode-option.active { background: #fff; color: var(--primary); font-weight: 900; box-shadow: 0 1px 2px rgba(15, 23, 42, 0.08); }
+        .color-row { display: flex; align-items: center; gap: 10px; }
+        .color-input { width: 52px; height: 38px; padding: 3px; border: 1px solid #d1d5db; border-radius: 6px; background: #fff; cursor: pointer; }
+        .color-value { font-size: 13px; font-weight: 700; color: #4b5563; min-width: 80px; }
         .container { display: flex; padding: 15px; height: calc(100vh - 50px); width: 100%; }
         .player-wrapper { flex: 0 0 60%; background: #000; border-radius: 12px; overflow: hidden; min-width: 300px; max-width: 90%; display: flex; }
         .player-wrapper iframe { width: 100%; height: 100%; border: none; }
@@ -55,7 +63,8 @@
         .chat-box { display: flex; flex-direction: column; border: 1px solid #d1d5db; border-radius: 8px; padding: 8px; }
         .chat-textarea { border: none; outline: none; width: 100%; resize: none; height: 40px; font-size: 14px; margin-bottom: 5px; }
         .chat-tools { display: flex; justify-content: space-between; align-items: center; }
-        .chat-send-btn { background: #00aeec; color: white; border: none; padding: 6px 16px; border-radius: 4px; cursor: pointer; }
+        .chat-send-btn { background: var(--primary); color: white; border: none; padding: 6px 16px; border-radius: 4px; cursor: pointer; }
+        .chat-send-btn:hover { filter: brightness(0.95); }
         .modal { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.4); backdrop-filter: blur(4px); z-index: 200; align-items: center; justify-content: center; }
         .modal-box { background: #fff; width: 90%; max-width: 850px; height: 80vh; border-radius: 12px; display: flex; overflow: hidden; box-shadow: 0 20px 25px -5px rgba(0,0,0,0.1); position: relative; }
         .qr-box { width: 320px; max-width: calc(100vw - 32px); background: #fff; border-radius: 12px; padding: 22px; box-shadow: 0 20px 25px -5px rgba(0,0,0,0.1); text-align: center; }
@@ -97,6 +106,9 @@
         #logConsole { background: #1e1e1e; color: #10b981; font-family: monospace; padding: 15px; border-radius: 8px; height: 100%; overflow-y: scroll; font-size: 12px; white-space: pre-wrap; }
         @media (max-width: 800px) {
             .container { flex-direction: column; }
+            .navbar { padding: 0 10px; gap: 8px; }
+            .nav-right { gap: 6px; }
+            .nav-btn { padding: 0 8px; }
             .room-pill { display: none; }
             .room-id-input { width: 78px; }
             .room-save-state { display: none; }
@@ -126,14 +138,15 @@
                 <span class="room-save-state" id="biliRoomSaveState"></span>
             </div>
         </div>
-        <div style="display:flex;gap:8px;align-items:center">
-            <select id="subtitleModeSelect" class="mode-select" title="字幕发送模式" onchange="setSubtitleMode(this.value)">
-                <option value="manual">手动</option>
-                <option value="auto">自动</option>
-            </select>
+        <div class="nav-right">
+            <button onclick="toggleRun()" id="runBtn" class="run-btn-top"><span>启动</span></button>
+            <div id="subtitleModeToggle" class="mode-toggle" title="字幕发送模式">
+                <button type="button" class="mode-option" data-mode="manual" onclick="setSubtitleMode('manual')">手动</button>
+                <button type="button" class="mode-option" data-mode="auto" onclick="setSubtitleMode('auto')">自动</button>
+            </div>
             <button class="nav-btn" onclick="exportData('csv')">CSV</button>
             <button class="nav-btn" onclick="exportData('json')">JSON</button>
-            <button class="nav-btn" onclick="openModal()">控制台</button>
+            <button class="nav-btn" onclick="openModal()">设置</button>
         </div>
     </div>
 
@@ -148,7 +161,7 @@
 
     <div class="container" id="container">
         <div class="player-wrapper" id="leftPanel">
-            <iframe id="liveFrame" src="https://www.bilibili.com/blackboard/live/live-activity-player.html?cid=15152878&logo=0&mute=0" allowfullscreen></iframe>
+            <iframe id="liveFrame" src="about:blank" allowfullscreen></iframe>
         </div>
         <div class="resizer" id="dragMe"></div>
         <div class="panel">
@@ -190,7 +203,17 @@
                 </div>
 
                 <div id="tab-general" class="tab-content active">
-                    <button onclick="toggleRun()" id="runBtn" style="width:100%; padding:14px; background:#10b981; color:white; border:none; border-radius:8px; font-weight:bold; margin-bottom:25px; cursor:pointer;"><span>启动同传</span></button>
+                    <div style="background:#f8fafc; padding:15px; border-radius:8px; margin-bottom:20px; border:1px solid #e2e8f0;">
+                        <div style="font-weight:bold; color:#1e293b; margin-bottom:10px; font-size:14px;">界面</div>
+                        <div class="form-group" style="margin-bottom:0;">
+                            <label class="form-label">主题颜色</label>
+                            <div class="color-row">
+                                <input type="color" id="set_theme_color" class="color-input" value="#4f46e5" oninput="previewThemeColor(this.value)">
+                                <span class="color-value" id="themeColorValue">#4f46e5</span>
+                            </div>
+                            <div class="form-helper">使用系统颜色面板自由选择，保存后下次启动继续使用。</div>
+                        </div>
+                    </div>
 
                     <div style="background:#f8fafc; padding:15px; border-radius:8px; margin-bottom:20px; border:1px solid #e2e8f0;">
                         <div style="font-weight:bold; color:#1e293b; margin-bottom:10px; font-size:14px;">ASR</div>
@@ -258,6 +281,14 @@
                         </div>
                     </div>
 
+                    <div class="form-group">
+                        <label class="form-label">主播类型</label>
+                        <input id="set_streamer_type" class="form-input" placeholder="例如：Vtuber" />
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">主播名称</label>
+                        <input id="set_streamer_name" class="form-input" placeholder="例如：鹿乃" />
+                    </div>
                     <div class="form-group">
                         <label class="form-label">游戏/场景提示</label>
                         <input id="set_game_hint" class="form-input" placeholder="例如：杂谈、APEX" />
@@ -328,6 +359,11 @@
                         <input type="hidden" id="set_banned_words">
                         <div class="form-helper" style="margin-top:15px;">识别结果包含这些词时会直接丢弃，不区分大小写。</div>
                     </div>
+                    <div class="form-group">
+                        <label class="form-label">游戏播报过滤</label>
+                        <input id="set_filter_games" class="form-input" placeholder="例如：valorant 或 valo，多个用逗号分隔" />
+                        <div class="form-helper">类似 KITS 的整条播报过滤；当前支持 Valorant/valo。</div>
+                    </div>
                 </div>
 
                 <div id="tab-logs" class="tab-content">
@@ -389,9 +425,10 @@
         setJumpBottomVisible(false);
     }
     function applySubtitleMode(mode) {
-        const select = document.getElementById('subtitleModeSelect');
-        select.value = mode === 'auto' ? 'auto' : 'manual';
-        select.classList.toggle('auto', select.value === 'auto');
+        const activeMode = mode === 'auto' ? 'auto' : 'manual';
+        document.querySelectorAll('.mode-option').forEach(btn => {
+            btn.classList.toggle('active', btn.dataset.mode === activeMode);
+        });
     }
     async function loadSubtitleMode() {
         try {
@@ -413,6 +450,23 @@
             applySubtitleMode('manual');
             alert(e.message || '字幕模式保存失败');
         }
+    }
+    function applyThemeColor(color) {
+        const value = /^#[0-9a-fA-F]{6}$/.test(color || '') ? color : '#4f46e5';
+        document.documentElement.style.setProperty('--primary', value);
+        const input = document.getElementById('set_theme_color');
+        const label = document.getElementById('themeColorValue');
+        if(input) input.value = value;
+        if(label) label.innerText = value;
+    }
+    function previewThemeColor(color) {
+        applyThemeColor(color);
+    }
+    async function loadThemeColor() {
+        try {
+            const data = await (await fetch('/theme')).json();
+            if(data.ok) applyThemeColor(data.theme_color);
+        } catch(e) {}
     }
     document.getElementById('transBox').addEventListener('scroll', () => {
         if (isTranslationsAtBottom()) setJumpBottomVisible(false);
@@ -438,6 +492,7 @@
         try {
             loadBiliProfile();
             loadSubtitleMode();
+            loadThemeColor();
             setRunBtn((await (await fetch('/status')).json()).running);
             const h = await (await fetch('/latest')).json();
             const b = document.getElementById('transBox');
@@ -454,6 +509,11 @@
     function playerUrl(roomId) {
         const id = String(roomId || '').trim() || '15152878';
         return `https://www.bilibili.com/blackboard/live/live-activity-player.html?cid=${encodeURIComponent(id)}&logo=0&mute=0`;
+    }
+    function setLiveRoom(roomId) {
+        const id = String(roomId || '').trim();
+        document.getElementById('biliRoomIdInput').value = id;
+        document.getElementById('liveFrame').src = id ? playerUrl(id) : 'about:blank';
     }
     function setProfileAvatar(imgId, fallbackId, url, fallbackText) {
         const img = document.getElementById(imgId);
@@ -483,8 +543,7 @@
             document.getElementById('biliAccount').title = biliLoggedIn ? '当前 Bilibili 账号' : '点击登录 Bilibili';
             document.getElementById('biliRoomName').innerText = room.name || '直播间';
             setProfileAvatar('biliRoomAvatar', 'biliRoomFallback', room.avatar, '播');
-            document.getElementById('biliRoomIdInput').value = roomId;
-            if(roomId) document.getElementById('liveFrame').src = playerUrl(roomId);
+            setLiveRoom(roomId);
         } catch(e) {}
     }
 
@@ -507,7 +566,7 @@
             const room = data.room || {};
             document.getElementById('biliRoomName').innerText = room.name || '直播间';
             setProfileAvatar('biliRoomAvatar', 'biliRoomFallback', room.avatar, '播');
-            document.getElementById('liveFrame').src = playerUrl(roomId);
+            setLiveRoom(roomId);
             state.innerText = 'OK';
             setTimeout(()=>{ if(state.innerText === 'OK') state.innerText = ''; }, 1500);
         } catch(e) {
@@ -569,8 +628,8 @@
 
     function setRunBtn(r) {
         const b=document.getElementById('runBtn');
-        b.querySelector('span').innerText=r?"停止同传":"启动同传";
-        b.style.background=r?"#ef4444":"#10b981";
+        b.querySelector('span').innerText=r?"停止":"启动";
+        b.classList.toggle('running', !!r);
     }
     async function toggleRun() {
         const a = document.getElementById('runBtn').innerText.includes('启动')?'start':'stop';
@@ -638,6 +697,7 @@
     function openModal() {
         document.getElementById('settingsModal').style.display = 'flex';
         fetch('/settings').then(r=>r.json()).then(c => {
+            applyThemeColor(c.theme_color||'#4f46e5');
             const asrEngine = c.asr_engine === 'qwen_asr' ? 'remote_realtime_asr'
                 : (c.asr_engine === 'kotoba_whisper' || c.asr_engine === 'local_sensevoice' ? 'local_asr' : (c.asr_engine||'local_asr'));
             document.getElementById('set_asr_engine').value = asrEngine;
@@ -649,6 +709,8 @@
             document.getElementById('set_remote_realtime_asr_model').value = c.remote_realtime_asr_model||c.remote_asr_model||'qwen3-asr-flash-realtime';
             document.getElementById('set_remote_realtime_asr_url').value = c.remote_realtime_asr_url||c.remote_asr_url||'wss://dashscope.aliyuncs.com/api-ws/v1/realtime';
             document.getElementById('set_remote_realtime_asr_timeout').value = c.remote_realtime_asr_timeout||c.remote_asr_timeout||8;
+            document.getElementById('set_streamer_type').value = c.streamer_type||'Vtuber';
+            document.getElementById('set_streamer_name').value = c.streamer_name||'鹿乃';
             document.getElementById('set_game_hint').value = c.game_hint||'';
             document.getElementById('set_prompt_extra').value = c.prompt_extra||'';
             document.getElementById('set_llm_base_url').value = c.llm_base_url||'https://api.openai.com/v1';
@@ -659,6 +721,7 @@
             document.getElementById('set_vad_threshold').value = c.vad_threshold||0.5;
             document.getElementById('set_min_speech_duration').value = c.min_speech_duration||1.0;
             document.getElementById('set_max_record_time').value = c.max_record_time||8;
+            document.getElementById('set_filter_games').value = c.filter_games||'';
             const raw = c.banned_words || "";
             bannedTags = raw.replace(/，/g, ',').split(',').map(s => s.trim()).filter(s => s);
             renderTags();
@@ -671,6 +734,7 @@
 
     async function saveSettings() {
         await fetch('/settings', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({
+            theme_color: document.getElementById('set_theme_color').value,
             asr_engine: document.getElementById('set_asr_engine').value,
             asr_device: document.getElementById('set_asr_device').value,
             asr_language: document.getElementById('set_asr_language').value,
@@ -680,6 +744,8 @@
             remote_realtime_asr_model: document.getElementById('set_remote_realtime_asr_model').value,
             remote_realtime_asr_url: document.getElementById('set_remote_realtime_asr_url').value,
             remote_realtime_asr_timeout: parseFloat(document.getElementById('set_remote_realtime_asr_timeout').value) || 8,
+            streamer_type: document.getElementById('set_streamer_type').value,
+            streamer_name: document.getElementById('set_streamer_name').value,
             game_hint: document.getElementById('set_game_hint').value,
             prompt_extra: document.getElementById('set_prompt_extra').value,
             llm_base_url: document.getElementById('set_llm_base_url').value,
@@ -690,7 +756,8 @@
             vad_threshold: parseFloat(document.getElementById('set_vad_threshold').value),
             min_speech_duration: parseFloat(document.getElementById('set_min_speech_duration').value),
             max_record_time: parseFloat(document.getElementById('set_max_record_time').value),
-            banned_words: bannedTags.join(', ')
+            banned_words: bannedTags.join(', '),
+            filter_games: document.getElementById('set_filter_games').value
         })});
         alert('配置已保存');
         closeModal();

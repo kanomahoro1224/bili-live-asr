@@ -16,7 +16,12 @@ __all__ = [
 
 
 def build_prompt(
-    texts: list[str], context_text: str, game_hint: str, prompt_extra: str
+    texts: list[str],
+    context_text: str,
+    game_hint: str,
+    prompt_extra: str,
+    streamer_type: str = "Vtuber",
+    streamer_name: str = "鹿乃",
 ) -> str:
     input_text = "\n".join(texts)
     context_block = ""
@@ -27,6 +32,8 @@ def build_prompt(
         )
     return render_prompt(
         "translation.txt",
+        streamer_type=streamer_type or "Vtuber",
+        streamer_name=streamer_name or "鹿乃",
         game_hint=game_hint,
         prompt_extra=prompt_extra,
         context_block=context_block,
@@ -82,6 +89,8 @@ class OpenAICompatibleTranslator:
             context_text,
             config.get("game_hint", ""),
             config.get("prompt_extra", ""),
+            config.get("streamer_type", "Vtuber"),
+            config.get("streamer_name", "鹿乃"),
         )
         try:
             content = client.chat(

@@ -304,7 +304,14 @@ def _handle_asr_result(state, translation_queue: queue.Queue, result: dict, asr_
         return
     current_config = _config_snapshot(state)
     blacklist = filters.parse_banned_words(current_config.get("banned_words", ""))
-    text = filters.filter_text(result["text"], blacklist)
+    try:
+        game_callouts = filters.resolve_games(
+            filters.parse_filter_games(current_config.get("filter_games", ""))
+        )
+    except ValueError as e:
+        log("Filter", str(e))
+        game_callouts = frozenset()
+    text = filters.filter_text(result["text"], blacklist, game_callouts)
     if not text:
         return
     log("ASR", f"识别: {text}")
