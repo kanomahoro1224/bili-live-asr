@@ -27,7 +27,7 @@ run.bat
 
 注意：
 
-- `run.bat` 会把 uv 缓存放到 `F:\WeChat\tong\.uv-cache`，避免大包占满 C 盘。
+- `run.bat` 会把 uv 缓存放到项目根目录的 `.uv-cache/`，避免大包占满系统盘。
 - `torch` / `torchaudio` 在 Windows 下从 `pytorch-cu126` 索引安装，见 `pyproject.toml` 的 `[tool.uv.sources]`。不要随手改回 PyPI 默认源。
 - ASR 模型是 `kotoba-tech/kotoba-whisper-v2.2`，下载到 `models/kotoba-whisper-v2.2`，规则是一个模型一个文件夹。
 - `ffmpeg` 是运行时外部工具，须在 PATH 中；uv 不管理 ffmpeg 二进制，也不要把 `ffmpeg.exe` 提交进仓库。
@@ -68,7 +68,7 @@ run.bat
 
 ## 关键约定
 
-- 只把 `F:\WeChat\tong\src\livetrans` 和根入口当作当前项目。`LiveTranslate-main/`、`submaku-stream-main/` 等目录只作参考。
+- 只把 `src/livetrans/` 和根入口当作当前项目。`LiveTranslate-main/`、`submaku-stream-main/` 等目录只作参考。
 - 重依赖必须延迟导入：`torch`、`transformers`、`funasr`、`silero_vad` 等不要在纯配置/过滤/存储模块顶层引入。
 - ASR 模型目录遵循 `models/<模型名>`，例如 `models/kotoba-whisper-v2.2`。不要回退到默认 Hugging Face cache 作为主路径。
 - LLM 调用统一走 `llm.LLMClient`。不要在 `translator.py` 或 Web 层重复写 HTTP 请求和鉴权逻辑。
