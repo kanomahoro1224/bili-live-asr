@@ -12,6 +12,15 @@ Bilibili 直播同传控制台。本版本使用本地 ASR、Silero VAD、OpenAI
 
 ## 运行
 
+运行前需要先安装外部工具 `ffmpeg`，并确认它在 PATH 中：
+
+```powershell
+ffmpeg -version
+ffprobe -version
+```
+
+`ffmpeg` 不放进 uv 环境，也不提交到仓库；建议用系统包管理器安装。
+
 ```powershell
 uv sync
 uv run python app.py

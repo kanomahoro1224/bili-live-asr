@@ -48,6 +48,7 @@ def run() -> None:
     from .translator import OpenAICompatibleTranslator
     from .web import create_web
     from . import pipeline
+    from .ffmpeg import require_ffmpeg
 
     config_path = os.path.join(current_dir, "config.json")
     config = load_config(config_path)
@@ -60,10 +61,12 @@ def run() -> None:
     app, socketio = create_web(state)
 
     log("Init", "=== AI 同传系统启动（本地 Kotoba Whisper 版）===")
-    ffmpeg_exe = os.path.join(current_dir, "ffmpeg.exe")
-    if not os.path.exists(ffmpeg_exe):
-        log("Error", f"未找到 ffmpeg.exe: {ffmpeg_exe}")
+    try:
+        ffmpeg_exe = require_ffmpeg()
+    except FileNotFoundError as e:
+        log("Error", str(e))
         sys.exit(1)
+    log("Init", f"ffmpeg: {ffmpeg_exe}")
 
     socketio.start_background_task(pipeline.run_worker_loop, state)
 

@@ -12,8 +12,8 @@ import queue
 import threading
 import time
 
-from . import audio, filters, storage
-from . import security
+from . import audio, filters, security, storage
+from .ffmpeg import require_ffmpeg
 from .llm import DEFAULT_LLM_BASE_URL, LLMClient, LLMError
 from .logging_util import log
 from .prompt_loader import render_prompt
@@ -321,7 +321,6 @@ def _handle_asr_result(state, translation_queue: queue.Queue, result: dict, asr_
 def run_worker_loop(state) -> None:
     """后台工作线程主循环。由 server 通过 socketio.start_background_task 启动。"""
     config = _config_snapshot(state)
-    ffmpeg_exe = os.path.join(state.current_dir, "ffmpeg.exe")
 
     log("Core", "工作线程启动，准备加载 ASR 引擎...")
     try:
@@ -381,8 +380,10 @@ def run_worker_loop(state) -> None:
             config = _config_snapshot(state)
             log("Core", "直播流配置已重载")
 
-        if not os.path.exists(ffmpeg_exe):
-            log("Error", "未找到 ffmpeg.exe")
+        try:
+            ffmpeg_exe = require_ffmpeg()
+        except FileNotFoundError as e:
+            log("Error", str(e))
             time.sleep(5)
             continue
 

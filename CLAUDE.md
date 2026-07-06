@@ -30,7 +30,7 @@ run.bat
 - `run.bat` 会把 uv 缓存放到 `F:\WeChat\tong\.uv-cache`，避免大包占满 C 盘。
 - `torch` / `torchaudio` 在 Windows 下从 `pytorch-cu126` 索引安装，见 `pyproject.toml` 的 `[tool.uv.sources]`。不要随手改回 PyPI 默认源。
 - ASR 模型是 `kotoba-tech/kotoba-whisper-v2.2`，下载到 `models/kotoba-whisper-v2.2`，规则是一个模型一个文件夹。
-- `ffmpeg.exe` 是运行时必需文件，当前项目直接引用根目录下的 `ffmpeg.exe`。
+- `ffmpeg` 是运行时外部工具，须在 PATH 中；uv 不管理 ffmpeg 二进制，也不要把 `ffmpeg.exe` 提交进仓库。
 - 当前根目录不是 Git 仓库；不要对参考目录或外部仓库做无关改动。
 
 ## 配置
@@ -57,7 +57,7 @@ run.bat
 - `web.py`：Flask 路由、登录、设置页、日志、导出、弹幕发送和内联前端模板。
 - `pipeline.py`：实时处理主循环。直播流 URL → `audio.stream_frames()` → `vad.VADProcessor` → ASR → 过滤 → LLM 翻译 → Socket.IO 推送和落盘。
 - `stream.py`：用 `streamlink` 从 Bilibili 直播间解析真实流地址。
-- `audio.py`：调用根目录 `ffmpeg.exe`，把直播流解码为 16kHz、单声道、512 samples 一帧的 float32 PCM。
+- `audio.py`：调用 PATH 中的 `ffmpeg`，把直播流解码为 16kHz、单声道、512 samples 一帧的 float32 PCM。
 - `vad.py`：Silero VAD 处理器。它只判断“是否有人声”和切分语音段，不做说话人识别。
 - `asr.py`：本地 ASR。默认 `KotobaWhisperEngine` 使用 Transformers ASR pipeline；旧 `SenseVoiceEngine` 保留为可选实现。
 - `llm.py`：OpenAI 兼容聊天客户端，只负责 base URL 规范化、鉴权头和 `/chat/completions` 请求。
