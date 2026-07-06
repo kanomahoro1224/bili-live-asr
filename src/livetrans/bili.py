@@ -17,6 +17,7 @@ __all__ = [
     "build_cookie_header",
     "load_cookie_items",
     "save_cookie_items",
+    "clear_cookie_file",
     "get_account_profile",
     "get_room_profile",
     "fetch_avatar_image",
@@ -77,6 +78,16 @@ def save_cookie_items(cookie_file: str, cookies: requests.cookies.RequestsCookie
     tmp = f"{cookie_file}.tmp"
     with open(tmp, "w", encoding="utf-8") as f:
         json.dump(items, f, ensure_ascii=False, indent=2)
+    os.replace(tmp, cookie_file)
+
+
+def clear_cookie_file(cookie_file: str) -> None:
+    """Clear stored Bilibili cookies while keeping a valid JSON file."""
+    directory = os.path.dirname(os.path.abspath(cookie_file))
+    os.makedirs(directory, exist_ok=True)
+    tmp = f"{cookie_file}.tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        f.write("[]")
     os.replace(tmp, cookie_file)
 
 

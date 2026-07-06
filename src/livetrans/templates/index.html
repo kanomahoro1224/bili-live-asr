@@ -15,6 +15,8 @@
         .profile-pill { height: 34px; border: 1px solid #e5e7eb; background: #fff; border-radius: 8px; display: flex; align-items: center; gap: 8px; padding: 4px 10px 4px 5px; min-width: 0; color: #374151; font-size: 13px; font-weight: 600; }
         .profile-button { cursor: pointer; }
         .profile-button:hover { background: #f9fafb; border-color: #c7d2fe; color: var(--primary); }
+        .account-logout-btn { display: none; height: 34px; border: 1px solid transparent; background: transparent; color: #6b7280; border-radius: 8px; padding: 0 8px; cursor: pointer; font-size: 13px; font-weight: 700; }
+        .account-logout-btn:hover { color: #ef4444; background: #fef2f2; border-color: #fecaca; }
         .profile-avatar { width: 24px; height: 24px; border-radius: 50%; background: #e5e7eb; overflow: hidden; flex: 0 0 24px; display: flex; align-items: center; justify-content: center; color: #6b7280; font-size: 12px; font-weight: 800; }
         .profile-avatar img { width: 100%; height: 100%; object-fit: cover; display: none; }
         .profile-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 120px; }
@@ -129,6 +131,7 @@
                 <span class="profile-avatar"><img id="biliAccountAvatar" alt=""><span id="biliAccountFallback">?</span></span>
                 <span class="profile-name" id="biliAccountName">点击登录</span>
             </button>
+            <button type="button" class="account-logout-btn" id="biliLogoutBtn" onclick="logoutBili(event)" title="退出当前 Bilibili 账号">退出</button>
             <div class="profile-pill room-pill" title="当前直播间">
                 <span class="profile-avatar"><img id="biliRoomAvatar" alt=""><span id="biliRoomFallback">播</span></span>
                 <span class="profile-name room-name" id="biliRoomName">直播间</span>
@@ -541,10 +544,24 @@
             document.getElementById('biliAccountName').innerText = account.name || '点击登录';
             setProfileAvatar('biliAccountAvatar', 'biliAccountFallback', account.avatar, biliLoggedIn ? '账' : '?');
             document.getElementById('biliAccount').title = biliLoggedIn ? '当前 Bilibili 账号' : '点击登录 Bilibili';
+            document.getElementById('biliLogoutBtn').style.display = biliLoggedIn ? 'inline-flex' : 'none';
             document.getElementById('biliRoomName').innerText = room.name || '直播间';
             setProfileAvatar('biliRoomAvatar', 'biliRoomFallback', room.avatar, '播');
             setLiveRoom(roomId);
         } catch(e) {}
+    }
+
+    async function logoutBili(event) {
+        if(event) event.stopPropagation();
+        try {
+            const data = await (await fetch('/bili/logout', {method:'POST'})).json();
+            if(!data.ok) throw new Error(data.error || '退出失败');
+            biliLoggedIn = false;
+            closeBiliLogin();
+            await loadBiliProfile();
+        } catch(e) {
+            alert(e.message || '退出失败');
+        }
     }
 
     async function saveRoomId() {

@@ -243,6 +243,26 @@ def create_web(state):
             log("Bili", f"二维码登录轮询失败: {e}")
             return jsonify({"ok": False, "status": "error", "message": str(e)}), 502
 
+    @app.route("/bili/logout", methods=["POST"])
+    def bili_logout():
+        if not session.get("logged_in"):
+            return jsonify({"ok": False, "error": "未授权"}), 403
+        try:
+            bili.clear_cookie_file(cookie_file)
+            legacy_cookie_file = os.path.join(current_dir, "bilicookies.json")
+            if legacy_cookie_file != cookie_file and os.path.exists(legacy_cookie_file):
+                bili.clear_cookie_file(legacy_cookie_file)
+        except Exception as e:
+            log("Bili", f"退出登录失败: {e}")
+            return jsonify({"ok": False, "error": "退出登录失败"}), 500
+        log("Bili", "已退出 Bilibili 账号")
+        return jsonify(
+            {
+                "ok": True,
+                "account": {"logged_in": False, "name": "点击登录", "avatar": ""},
+            }
+        )
+
     @app.route("/export/<fmt>")
     def export_file(fmt):
         if not session.get("logged_in"):
