@@ -7,6 +7,7 @@ import time
 
 from flask import (
     Flask,
+    Response,
     jsonify,
     redirect,
     render_template,
@@ -118,6 +119,20 @@ def create_web(state):
                 "account": bili.get_account_profile(cookie_file),
                 "room": bili.get_room_profile(config.get("bili_room_id", "")),
             }
+        )
+
+    @app.route("/bili/avatar")
+    def bili_avatar():
+        if not session.get("logged_in"):
+            return jsonify({"ok": False, "error": "未授权"}), 403
+        try:
+            body, content_type = bili.fetch_avatar_image(request.args.get("url", ""))
+        except Exception:
+            return jsonify({"ok": False, "error": "头像加载失败"}), 404
+        return Response(
+            body,
+            content_type=content_type,
+            headers={"Cache-Control": "public, max-age=3600"},
         )
 
     @app.route("/bili/login/qrcode", methods=["POST"])

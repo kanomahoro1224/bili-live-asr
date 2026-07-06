@@ -369,6 +369,10 @@
         } catch(e){}
     };
 
+    function profileAvatarUrl(url) {
+        if(!url) return '';
+        return '/bili/avatar?url=' + encodeURIComponent(url);
+    }
     function setProfileAvatar(imgId, fallbackId, url, fallbackText) {
         const img = document.getElementById(imgId);
         const fb = document.getElementById(fallbackId);
@@ -376,7 +380,7 @@
         if(url) {
             img.onload = () => { img.style.display='block'; fb.style.display='none'; };
             img.onerror = () => { img.style.display='none'; fb.style.display='block'; };
-            img.src = url;
+            img.src = profileAvatarUrl(url);
         } else {
             img.removeAttribute('src');
             img.style.display='none';

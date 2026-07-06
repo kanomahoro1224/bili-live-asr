@@ -8,6 +8,7 @@ import json
 import os
 import time
 from typing import Any
+from urllib.parse import urlparse
 
 import qrcode
 import requests
@@ -18,12 +19,14 @@ __all__ = [
     "save_cookie_items",
     "get_account_profile",
     "get_room_profile",
+    "fetch_avatar_image",
     "create_login_qrcode",
     "poll_login_qrcode",
 ]
 
 USER_AGENT = "Mozilla/5.0"
 DEFAULT_AVATAR = ""
+ALLOWED_IMAGE_HOST_SUFFIXES = (".hdslb.com", ".bilibili.com")
 
 
 def load_cookie_items(cookie_file: str) -> list[dict[str, Any]]:
@@ -86,6 +89,36 @@ def _get_json(url: str, cookie_file: str | None = None, timeout: int = 10) -> di
     resp = requests.get(url, headers=headers, timeout=timeout)
     resp.raise_for_status()
     return resp.json()
+
+
+def _normalize_image_url(url: str) -> str:
+    url = (url or "").strip()
+    if url.startswith("//"):
+        url = f"https:{url}"
+    parsed = urlparse(url)
+    host = parsed.hostname or ""
+    if parsed.scheme != "https":
+        raise ValueError("unsupported image url")
+    if not any(host == suffix[1:] or host.endswith(suffix) for suffix in ALLOWED_IMAGE_HOST_SUFFIXES):
+        raise ValueError("unsupported image host")
+    return url
+
+
+def fetch_avatar_image(url: str) -> tuple[bytes, str]:
+    url = _normalize_image_url(url)
+    resp = requests.get(
+        url,
+        headers={
+            "User-Agent": USER_AGENT,
+            "Referer": "https://www.bilibili.com/",
+        },
+        timeout=10,
+    )
+    resp.raise_for_status()
+    content_type = resp.headers.get("Content-Type", "image/jpeg").split(";", 1)[0]
+    if not content_type.startswith("image/"):
+        raise ValueError("url did not return an image")
+    return resp.content, content_type
 
 
 def get_account_profile(cookie_file: str) -> dict[str, Any]:
