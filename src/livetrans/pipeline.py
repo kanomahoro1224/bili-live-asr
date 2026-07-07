@@ -14,7 +14,7 @@ import time
 
 from . import audio, filters, security, storage
 from .ffmpeg import require_ffmpeg
-from .llm import DEFAULT_LLM_BASE_URL, LLMClient, LLMError
+from .llm import DEFAULT_LLM_BASE_URL, LLMClient, LLMError, LLMTimeoutError
 from .logging_util import log
 from .prompt_loader import render_prompt
 from .stream import get_stream_url
@@ -147,8 +147,17 @@ def _translate_and_emit(
     """后台线程：翻译一批文本并逐条推送 + 落盘。"""
     try:
         config = _config_snapshot(state)
+        try:
+            tl_timeout = max(1.0, float(config.get("tl_timeout", 30.0)))
+        except (TypeError, ValueError):
+            tl_timeout = 30.0
         tl_start = time.perf_counter()
-        trans = state.translator.translate(texts, config)
+        try:
+            trans = state.translator.translate(texts, config)
+        except LLMTimeoutError:
+            preview = " / ".join(texts)[:80]
+            log("TL", f"翻译超时 {tl_timeout:g}s，丢弃任务：{preview}")
+            return
         tl_ms = int(round((time.perf_counter() - tl_start) * 1000))
         save_dir = os.path.join(state.current_dir, "output")
         os.makedirs(save_dir, exist_ok=True)
@@ -238,10 +247,19 @@ def _enqueue_auto_subtitle(
         log("Subtitle", "自动发送队列仍然满，丢弃当前候选")
 
 
+def _emit_subtitle_status(state, ts: float | None, status: str) -> None:
+    if ts is None:
+        return
+    try:
+        state.socketio.emit("subtitle_status", {"ts": ts, "status": status})
+    except Exception as e:
+        log("Subtitle", f"字幕状态推送失败: {e}")
+
+
 def _verify_subtitle_with_llm(text: str, orig: str, config: dict) -> bool:
-    api_key = config.get("llm_api_key", "")
-    base_url = config.get("llm_base_url") or DEFAULT_LLM_BASE_URL
-    model = config.get("llm_model", "gpt-4.1-mini")
+    api_key = config.get("subtitle_review_api_key") or config.get("llm_api_key", "")
+    base_url = config.get("subtitle_review_base_url") or config.get("llm_base_url") or DEFAULT_LLM_BASE_URL
+    model = (config.get("subtitle_review_model") or config.get("llm_model") or "gpt-4.1-mini")
     client = LLMClient(base_url=base_url, api_key=api_key, model=model, timeout=20)
     if client.requires_api_key and not api_key:
         log("Subtitle", "自动发送跳过：未配置 LLM API Key")
@@ -249,15 +267,21 @@ def _verify_subtitle_with_llm(text: str, orig: str, config: dict) -> bool:
 
     prompt = render_prompt("subtitle_review.txt", orig=orig, text=text)
     try:
-        decision = client.chat(
+        thinking_type = "enabled" if config.get("subtitle_review_thinking_enabled") else "disabled"
+        raw_decision = client.chat(
             [{"role": "user", "content": prompt}],
             temperature=0,
-            max_tokens=4,
-        ).strip().upper()
+            thinking={"type": thinking_type},
+        ).strip()
     except LLMError as e:
         log("Subtitle", f"自动发送审核失败: {e}")
         return False
-    return decision.startswith("SEND")
+    if not raw_decision:
+        log("Subtitle", f"subtitle_review 空输出：模型={model}")
+    decision = raw_decision.upper()
+    parsed = "SEND" if decision.startswith("SEND") else "SKIP"
+    log("Subtitle", f"subtitle_review 模型={model} 输出={raw_decision!r} 解析结果={parsed}")
+    return parsed == "SEND"
 
 
 def _wait_subtitle_interval(state, config: dict) -> None:
@@ -280,11 +304,14 @@ def _auto_subtitle_worker(state, subtitle_queue: queue.Queue) -> None:
                 continue
             text = str(item.get("tran") or "").strip()
             orig = str(item.get("orig") or "").strip()
+            ts = item.get("ts")
             if len(text) > 198:
                 log("Subtitle", "自动发送跳过：字幕过长")
+                _emit_subtitle_status(state, ts, "unsent")
                 continue
             if not _verify_subtitle_with_llm(text, orig, config):
                 log("Subtitle", f"自动发送审核未通过: {text}")
+                _emit_subtitle_status(state, ts, "unsent")
                 continue
             _wait_subtitle_interval(state, config)
             send_config = _config_snapshot(state)
@@ -293,8 +320,10 @@ def _auto_subtitle_worker(state, subtitle_queue: queue.Queue) -> None:
             result = security.send_danmu(f"[{text}]", send_config, cookie_file)
             if result.get("ok"):
                 log("Subtitle", f"自动发送: {text}")
+                _emit_subtitle_status(state, ts, "sent")
             else:
                 log("Subtitle", f"自动发送失败: {result.get('error')}")
+                _emit_subtitle_status(state, ts, "failed")
         finally:
             subtitle_queue.task_done()
 

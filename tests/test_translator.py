@@ -5,7 +5,7 @@ from livetrans.translator import (
     build_prompt,
     clean_translation_lines,
 )
-from livetrans.llm import LLMClient
+from livetrans.llm import LLMClient, LLMTimeoutError
 
 
 def test_build_prompt_without_context():
@@ -41,6 +41,56 @@ def test_translate_short_circuits():
     assert t.translate([], {}) == []
     assert t.translate(["无"], {}) == ["..."]
     assert t.translate(["x"], {"llm_api_key": ""}) == ["【未配置Key】"]
+
+
+def test_translate_sends_thinking_mode(monkeypatch):
+    calls = []
+
+    class Client:
+        requires_api_key = False
+
+        def __init__(self, base_url, api_key, model, timeout):
+            calls.append({"timeout": timeout})
+
+        def chat(self, messages, **params):
+            calls.append(params)
+            return "你好"
+
+    monkeypatch.setattr("livetrans.translator.LLMClient", Client)
+    t = OpenAICompatibleTranslator()
+
+    assert t.translate(["こんにちは"], {"llm_thinking_enabled": False}) == ["你好"]
+    assert calls[0]["timeout"] == 30.0
+    assert calls[1]["thinking"] == {"type": "disabled"}
+
+    assert t.translate(["こんにちは"], {"llm_thinking_enabled": True}) == ["你好"]
+    assert calls[2]["timeout"] == 30.0
+    assert calls[3]["thinking"] == {"type": "enabled"}
+
+
+def test_translate_uses_configured_timeout_and_reraises_timeout(monkeypatch):
+    calls = []
+
+    class Client:
+        requires_api_key = False
+
+        def __init__(self, base_url, api_key, model, timeout):
+            calls.append(timeout)
+
+        def chat(self, messages, **params):
+            raise LLMTimeoutError("timed out")
+
+    monkeypatch.setattr("livetrans.translator.LLMClient", Client)
+    t = OpenAICompatibleTranslator()
+
+    try:
+        t.translate(["こんにちは"], {"tl_timeout": 12})
+    except LLMTimeoutError:
+        pass
+    else:
+        raise AssertionError("expected timeout")
+
+    assert calls == [12.0]
 
 
 def test_llm_client_normalizes_base_url():

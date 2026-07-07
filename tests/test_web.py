@@ -52,14 +52,21 @@ def test_theme_subtitle_mode_and_settings_save(tmp_path, monkeypatch):
 
     resp = client.post(
         "/settings",
-        json={"asr_language": "ja", "vad_threshold": "0.3", "unknown": "ignored"},
+        json={
+            "asr_language": "ja",
+            "vad_threshold": "0.3",
+            "tl_timeout": "12.5",
+            "unknown": "ignored",
+        },
     )
     assert resp.json == {"ok": True}
     assert state.config["vad_threshold"] == 0.3
+    assert state.config["tl_timeout"] == 12.5
     assert "unknown" not in state.config
     assert state.reload_event.is_set()
     loaded = json.loads(config_path.read_text(encoding="utf-8"))
     assert loaded["vad"]["vad_threshold"] == 0.3
+    assert loaded["translation"]["tl_timeout"] == 12.5
 
 
 def test_bili_room_toggle_send_and_export(tmp_path, monkeypatch):

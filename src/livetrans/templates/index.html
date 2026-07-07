@@ -54,12 +54,16 @@
         .scroll-area { flex: 1; overflow-y: auto; padding: 15px; background: #f9fafb; scroll-behavior: smooth; }
         .msg-card { background: #fff; border: 1px solid #e5e7eb; border-radius: 8px; padding: 12px; margin-bottom: 12px; box-shadow: 0 1px 2px rgba(0,0,0,0.02); }
         .msg-header { font-size: 12px; color: #9ca3af; margin-bottom: 6px; }
-        .edit-grid { display: grid; grid-template-columns: 1fr 1fr 40px; gap: 8px; align-items: start; }
+        .edit-grid { display: grid; grid-template-columns: 1fr 1fr 56px; gap: 8px; align-items: start; }
         .edit-column { min-width: 0; }
         .edit-input { width: 100%; padding: 8px; border: 1px solid #e5e7eb; border-radius: 6px; font-size: 13px; resize: none; height: 48px; font-family: inherit; }
         .edit-input.orig { background: #f3f4f6; color: #4b5563; }
         .latency-line { margin-top: 5px; color: #6b7280; font-size: 11px; line-height: 1.2; }
         .send-btn-mini { background: #eff6ff; color: var(--primary); border: 1px solid #c7d2fe; border-radius: 6px; cursor: pointer; display: flex; align-items: center; justify-content: center; min-height: 48px; font-weight: 700; }
+        .send-control { min-width: 0; }
+        .send-status { display: none; margin-top: 5px; color: #6b7280; font-size: 11px; line-height: 1.2; font-weight: 700; text-align: center; white-space: nowrap; }
+        .send-status.sent { color: #059669; }
+        .send-status.failed { color: #dc2626; }
         .jump-bottom-btn { display: none; position: absolute; right: 18px; bottom: 92px; width: 36px; height: 36px; border-radius: 50%; border: 1px solid #c7d2fe; background: #eff6ff; color: var(--primary); font-size: 18px; font-weight: 800; cursor: pointer; box-shadow: 0 8px 18px rgba(15, 23, 42, 0.12); z-index: 5; }
         .jump-bottom-btn:hover { background: #dbeafe; }
         .chat-input-area { padding: 10px; background: #fff; border-top: 1px solid #e5e7eb; }
@@ -320,6 +324,43 @@
                         <label class="form-label">LLM 模型</label>
                         <input id="set_llm_model" class="form-input" placeholder="gpt-4.1-mini" />
                     </div>
+                    <div class="form-group">
+                        <label class="form-label">TL 超时时间（秒）</label>
+                        <input type="number" id="set_tl_timeout" class="form-input" step="1" min="1" placeholder="30" />
+                        <div class="form-helper">单条翻译超过该时间会丢弃，不显示失败占位。</div>
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">LLM 思考模式</label>
+                        <input type="hidden" id="set_llm_thinking_enabled" value="false">
+                        <div class="mode-toggle">
+                            <button type="button" class="mode-option" data-thinking-group="llm" data-value="false" onclick="setThinkingMode('llm', false)">关闭</button>
+                            <button type="button" class="mode-option" data-thinking-group="llm" data-value="true" onclick="setThinkingMode('llm', true)">开启</button>
+                        </div>
+                    </div>
+                    <div style="background:#f8fafc; padding:15px; border-radius:8px; margin-bottom:20px; border:1px solid #e2e8f0;">
+                        <div style="font-weight:bold; color:#1e293b; margin-bottom:10px; font-size:14px;">字幕审核</div>
+                        <div class="form-group">
+                            <label class="form-label">审核 Base URL</label>
+                            <input id="set_subtitle_review_base_url" class="form-input" placeholder="留空则沿用 LLM Base URL" />
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label">审核 API Key</label>
+                            <input type="password" id="set_subtitle_review_api_key" class="form-input" placeholder="留空则沿用 LLM API Key" />
+                        </div>
+                        <div class="form-group" style="margin-bottom:0;">
+                            <label class="form-label">审核模型</label>
+                            <input id="set_subtitle_review_model" class="form-input" placeholder="留空则沿用 LLM 模型" />
+                            <div class="form-helper">自动模式下审核字幕是否可发送时使用，不影响翻译模型。</div>
+                        </div>
+                        <div class="form-group" style="margin-top:20px;margin-bottom:0;">
+                            <label class="form-label">审核思考模式</label>
+                            <input type="hidden" id="set_subtitle_review_thinking_enabled" value="false">
+                            <div class="mode-toggle">
+                                <button type="button" class="mode-option" data-thinking-group="subtitle_review" data-value="false" onclick="setThinkingMode('subtitle_review', false)">关闭</button>
+                                <button type="button" class="mode-option" data-thinking-group="subtitle_review" data-value="true" onclick="setThinkingMode('subtitle_review', true)">开启</button>
+                            </div>
+                        </div>
+                    </div>
 
                     <div style="background:#f0fdf4; padding:15px; border-radius:8px; margin-bottom:20px; border:1px solid #bbf7d0;">
                         <div style="font-weight:bold; color:#15803d; margin-bottom:10px; font-size:14px;">上下文翻译</div>
@@ -408,6 +449,7 @@
     function renderMessageCard(d, timeText) {
         const div = document.createElement('div');
         div.className = 'msg-card';
+        div.dataset.ts = String(d.ts || '');
         div.innerHTML = `<div class="msg-header">${timeText}</div>
             <div class="edit-grid">
                 <div class="edit-column">
@@ -418,7 +460,10 @@
                     <textarea class="edit-input tran">${esc(d.tran)}</textarea>
                     <div class="latency-line">TL ${latencyText(d.tl_ms)} ms</div>
                 </div>
-                <button class="send-btn-mini" onclick="sendTran(this)">&#8594;</button>
+                <div class="send-control">
+                    <button class="send-btn-mini" onclick="sendTran(this)">&#8594;</button>
+                    <div class="send-status"></div>
+                </div>
             </div>`;
         return div;
     }
@@ -433,6 +478,22 @@
         const b = document.getElementById('transBox');
         b.scrollTop = b.scrollHeight;
         setJumpBottomVisible(false);
+    }
+    function setSendStatus(control, text, state) {
+        const status = control.querySelector('.send-status');
+        status.textContent = text;
+        status.className = `send-status ${state || ''}`.trim();
+        status.style.display = 'block';
+    }
+    function updateSubtitleStatus(data) {
+        const ts = String(data && data.ts || '');
+        const card = Array.from(document.querySelectorAll('.msg-card')).find(el => el.dataset.ts === ts);
+        if(!card) return;
+        const labels = {unsent: '未发送', sent: '已发送', failed: '发送失败'};
+        const states = {unsent: '', sent: 'sent', failed: 'failed'};
+        const text = labels[data.status];
+        if(!text) return;
+        setSendStatus(card.querySelector('.send-control'), text, states[data.status]);
     }
     function applySubtitleMode(mode) {
         const activeMode = mode === 'auto' ? 'auto' : 'manual';
@@ -496,6 +557,7 @@
         b.scrollTop = oldTop;
         setJumpBottomVisible(b.scrollHeight > b.clientHeight);
     });
+    socket.on('subtitle_status', updateSubtitleStatus);
     socket.on('status_update', s => setRunBtn(s.running));
 
     window.onload = async () => {
@@ -740,6 +802,12 @@
             document.getElementById('set_llm_base_url').value = c.llm_base_url||'https://api.openai.com/v1';
             document.getElementById('set_llm_api_key').value = c.llm_api_key||'';
             document.getElementById('set_llm_model').value = c.llm_model||'gpt-4.1-mini';
+            document.getElementById('set_tl_timeout').value = c.tl_timeout||30;
+            setThinkingMode('llm', !!c.llm_thinking_enabled);
+            document.getElementById('set_subtitle_review_base_url').value = c.subtitle_review_base_url||'';
+            document.getElementById('set_subtitle_review_api_key').value = c.subtitle_review_api_key||'';
+            document.getElementById('set_subtitle_review_model').value = c.subtitle_review_model||'';
+            setThinkingMode('subtitle_review', !!c.subtitle_review_thinking_enabled);
             document.getElementById('set_use_translation_context').value = c.use_translation_context !== false ? 'true' : 'false';
             document.getElementById('set_context_window_size').value = c.context_window_size||5;
             document.getElementById('set_vad_threshold').value = c.vad_threshold||0.5;
@@ -755,6 +823,14 @@
     }
 
     function closeModal() { document.getElementById('settingsModal').style.display='none'; if(logInterval) clearInterval(logInterval); }
+
+    function setThinkingMode(group, enabled) {
+        const value = enabled ? 'true' : 'false';
+        document.getElementById(`set_${group}_thinking_enabled`).value = value;
+        document.querySelectorAll(`[data-thinking-group="${group}"]`).forEach(btn => {
+            btn.classList.toggle('active', btn.dataset.value === value);
+        });
+    }
 
     async function saveSettings() {
         await fetch('/settings', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({
@@ -775,6 +851,12 @@
             llm_base_url: document.getElementById('set_llm_base_url').value,
             llm_api_key: document.getElementById('set_llm_api_key').value,
             llm_model: document.getElementById('set_llm_model').value,
+            tl_timeout: parseFloat(document.getElementById('set_tl_timeout').value) || 30,
+            llm_thinking_enabled: document.getElementById('set_llm_thinking_enabled').value === 'true',
+            subtitle_review_base_url: document.getElementById('set_subtitle_review_base_url').value,
+            subtitle_review_api_key: document.getElementById('set_subtitle_review_api_key').value,
+            subtitle_review_model: document.getElementById('set_subtitle_review_model').value,
+            subtitle_review_thinking_enabled: document.getElementById('set_subtitle_review_thinking_enabled').value === 'true',
             use_translation_context: document.getElementById('set_use_translation_context').value === 'true',
             context_window_size: parseInt(document.getElementById('set_context_window_size').value) || 5,
             vad_threshold: parseFloat(document.getElementById('set_vad_threshold').value),
@@ -789,7 +871,28 @@
 
     async function fetchLogs() { try { const d = await (await fetch('/logs')).json(); const el = document.getElementById('logConsole'); if(el.innerText.length!==d.logs.join('\\n').length){el.innerText=d.logs.join('\\n');el.scrollTop=el.scrollHeight;}} catch{} }
     async function sendChat() { const i=document.getElementById('chatInput'); if(!i.value.trim())return; await fetch('/send',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text:i.value})}); i.value=''; document.getElementById('charCount').innerText='0/40'; }
-    async function sendTran(btn) { const t=btn.parentElement.querySelector('.tran').value; if(!t)return; btn.innerText='...'; const r=await fetch('/send',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text:'['+t+']'})}); btn.innerText=(await r.json()).ok?'OK':'X'; setTimeout(()=>btn.innerHTML='&#8594;',2000); }
+    async function sendTran(btn) {
+        const card = btn.closest('.msg-card');
+        const control = btn.closest('.send-control');
+        const t = card.querySelector('.tran').value.trim();
+        if(!t) return;
+        btn.innerText = '...';
+        btn.disabled = true;
+        try {
+            const r = await fetch('/send', {
+                method:'POST',
+                headers:{'Content-Type':'application/json'},
+                body:JSON.stringify({text:'['+t+']'})
+            });
+            const data = await r.json();
+            setSendStatus(control, data.ok ? '已发送' : '发送失败', data.ok ? 'sent' : 'failed');
+        } catch(e) {
+            setSendStatus(control, '发送失败', 'failed');
+        } finally {
+            btn.disabled = false;
+            btn.innerHTML = '&#8594;';
+        }
+    }
     function exportData(fmt) { window.open('/export/' + fmt, '_blank'); }
     function esc(s){ return s?s.replace(/&/g,'&amp;').replace(/</g,'&lt;'):''; }
     </script>

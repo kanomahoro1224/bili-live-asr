@@ -5,7 +5,7 @@ from __future__ import annotations
 import collections
 from typing import Any
 
-from .llm import DEFAULT_LLM_BASE_URL, LLMClient, LLMError
+from .llm import DEFAULT_LLM_BASE_URL, LLMClient, LLMError, LLMTimeoutError
 from .prompt_loader import render_prompt
 
 __all__ = [
@@ -76,7 +76,16 @@ class OpenAICompatibleTranslator:
         api_key = config.get("llm_api_key", "")
         base_url = config.get("llm_base_url") or DEFAULT_LLM_BASE_URL
         model = config.get("llm_model", "gpt-4.1-mini")
-        client = LLMClient(base_url=base_url, api_key=api_key, model=model)
+        try:
+            timeout = max(1.0, float(config.get("tl_timeout", 30.0)))
+        except (TypeError, ValueError):
+            timeout = 30.0
+        client = LLMClient(
+            base_url=base_url,
+            api_key=api_key,
+            model=model,
+            timeout=timeout,
+        )
         if client.requires_api_key and not api_key:
             return ["【未配置Key】"] * len(texts)
 
@@ -93,10 +102,14 @@ class OpenAICompatibleTranslator:
             config.get("streamer_name", "鹿乃"),
         )
         try:
+            thinking_type = "enabled" if config.get("llm_thinking_enabled") else "disabled"
             content = client.chat(
                 [{"role": "user", "content": prompt}],
                 temperature=0.3,
+                thinking={"type": thinking_type},
             )
+        except LLMTimeoutError:
+            raise
         except LLMError:
             return ["(失败)"] * len(texts)
 

@@ -2,8 +2,11 @@ import os
 import queue
 import threading
 
+import pytest
+
 from livetrans.state import AppState
 from livetrans import pipeline
+from livetrans.llm import LLMTimeoutError
 from livetrans.pipeline import _is_remote_realtime_asr
 
 
@@ -53,6 +56,40 @@ def test_translate_and_emit_saves_history_and_auto_subtitle(monkeypatch, tmp_pat
     assert state.socketio.events[0][0] == "new_message"
     assert saved
     assert subtitle_queue.get_nowait()["tran"] == "原文-译"
+
+
+def test_translate_and_emit_drops_timeout_task(monkeypatch, tmp_path):
+    class Translator:
+        def translate(self, texts, config):
+            raise LLMTimeoutError("timed out")
+
+    class Socket:
+        def __init__(self):
+            self.events = []
+
+        def emit(self, name, data):
+            self.events.append((name, data))
+
+    state = AppState(
+        {"subtitle_send_mode": "auto", "llm_api_key": "key", "tl_timeout": 9},
+        str(tmp_path / "config.json"),
+        str(tmp_path),
+    )
+    state.translator = Translator()
+    state.socketio = Socket()
+    subtitle_queue = queue.Queue()
+    saved = []
+    logs = []
+    monkeypatch.setattr(pipeline.storage, "auto_save_record", lambda *args: saved.append(args))
+    monkeypatch.setattr(pipeline, "log", lambda tag, msg: logs.append((tag, msg)))
+
+    pipeline._translate_and_emit(state, ["原文"], 100.0, asr_ms=12, subtitle_queue=subtitle_queue)
+
+    assert not state.history_buffer
+    assert state.socketio.events == []
+    assert saved == []
+    assert subtitle_queue.empty()
+    assert logs == [("TL", "翻译超时 9s，丢弃任务：原文")]
 
 
 def test_handle_asr_result_filters_and_enqueues(monkeypatch, tmp_path):
@@ -110,3 +147,128 @@ def test_wait_subtitle_interval_updates_timestamp(monkeypatch, tmp_path):
 
     assert slept == [1.0]
     assert state.last_subtitle_send_at == 12.0
+
+
+def test_auto_subtitle_worker_emits_unsent_when_review_skips(monkeypatch, tmp_path):
+    class Socket:
+        def __init__(self):
+            self.events = []
+
+        def emit(self, name, data):
+            self.events.append((name, data))
+
+    class OneItemQueue:
+        def get(self):
+            return {"orig": "原文", "tran": "译文", "ts": 123.0}
+
+        def task_done(self):
+            raise RuntimeError("stop")
+
+    state = AppState(
+        {"subtitle_send_mode": "auto", "llm_api_key": "key"},
+        str(tmp_path / "config.json"),
+        str(tmp_path),
+    )
+    state.socketio = Socket()
+    monkeypatch.setattr(pipeline, "_verify_subtitle_with_llm", lambda *args: False)
+
+    with pytest.raises(RuntimeError, match="stop"):
+        pipeline._auto_subtitle_worker(state, OneItemQueue())
+
+    assert state.socketio.events == [
+        ("subtitle_status", {"ts": 123.0, "status": "unsent"})
+    ]
+
+
+@pytest.mark.parametrize(
+    ("send_result", "status"),
+    [({"ok": True}, "sent"), ({"ok": False, "error": "bad"}, "failed")],
+)
+def test_auto_subtitle_worker_emits_send_result_status(
+    monkeypatch, tmp_path, send_result, status
+):
+    class Socket:
+        def __init__(self):
+            self.events = []
+
+        def emit(self, name, data):
+            self.events.append((name, data))
+
+    class OneItemQueue:
+        def get(self):
+            return {"orig": "原文", "tran": "译文", "ts": 123.0}
+
+        def task_done(self):
+            raise RuntimeError("stop")
+
+    state = AppState(
+        {"subtitle_send_mode": "auto", "llm_api_key": "key"},
+        str(tmp_path / "config.json"),
+        str(tmp_path),
+    )
+    state.socketio = Socket()
+    monkeypatch.setattr(pipeline, "_verify_subtitle_with_llm", lambda *args: True)
+    monkeypatch.setattr(pipeline, "_wait_subtitle_interval", lambda *args: None)
+    monkeypatch.setattr(pipeline.security, "send_danmu", lambda *args: send_result)
+
+    with pytest.raises(RuntimeError, match="stop"):
+        pipeline._auto_subtitle_worker(state, OneItemQueue())
+
+    assert state.socketio.events == [
+        ("subtitle_status", {"ts": 123.0, "status": status})
+    ]
+
+
+def test_verify_subtitle_logs_model_output_and_parsed_result(monkeypatch):
+    logs = []
+    calls = []
+
+    class Client:
+        requires_api_key = False
+
+        def __init__(self, base_url, api_key, model, timeout):
+            self.model = model
+
+        def chat(self, messages, **params):
+            calls.append(params)
+            return "send\n"
+
+    monkeypatch.setattr(pipeline, "LLMClient", Client)
+    monkeypatch.setattr(pipeline, "render_prompt", lambda name, **values: "prompt")
+    monkeypatch.setattr(pipeline, "log", lambda tag, msg: logs.append((tag, msg)))
+
+    assert pipeline._verify_subtitle_with_llm(
+        "译文", "原文", {"llm_model": "review-model", "llm_base_url": "http://local/v1"}
+    )
+    assert logs == [
+        (
+            "Subtitle",
+            "subtitle_review 模型=review-model 输出='send' 解析结果=SEND",
+        )
+    ]
+    assert calls == [{"temperature": 0, "thinking": {"type": "disabled"}}]
+
+
+def test_verify_subtitle_logs_empty_output(monkeypatch):
+    logs = []
+
+    class Client:
+        requires_api_key = False
+
+        def __init__(self, base_url, api_key, model, timeout):
+            pass
+
+        def chat(self, messages, **params):
+            return ""
+
+    monkeypatch.setattr(pipeline, "LLMClient", Client)
+    monkeypatch.setattr(pipeline, "render_prompt", lambda name, **values: "prompt")
+    monkeypatch.setattr(pipeline, "log", lambda tag, msg: logs.append((tag, msg)))
+
+    assert not pipeline._verify_subtitle_with_llm(
+        "译文", "原文", {"llm_model": "review-model", "llm_base_url": "http://local/v1"}
+    )
+    assert logs == [
+        ("Subtitle", "subtitle_review 空输出：模型=review-model"),
+        ("Subtitle", "subtitle_review 模型=review-model 输出='' 解析结果=SKIP"),
+    ]

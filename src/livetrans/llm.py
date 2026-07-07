@@ -8,13 +8,17 @@ from urllib.parse import urlparse
 
 import requests
 
-__all__ = ["DEFAULT_LLM_BASE_URL", "LLMError", "LLMClient"]
+__all__ = ["DEFAULT_LLM_BASE_URL", "LLMError", "LLMTimeoutError", "LLMClient"]
 
 DEFAULT_LLM_BASE_URL = "https://api.openai.com/v1"
 
 
 class LLMError(RuntimeError):
     """Raised when the OpenAI-compatible endpoint cannot return chat content."""
+
+
+class LLMTimeoutError(LLMError):
+    """Raised when the OpenAI-compatible endpoint exceeds the request timeout."""
 
 
 def _chat_url(base_url: str) -> str:
@@ -26,12 +30,45 @@ def _chat_url(base_url: str) -> str:
     return f"{base}/chat/completions"
 
 
+def _content_to_text(content: Any) -> str:
+    if content is None:
+        return ""
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        parts: list[str] = []
+        for item in content:
+            if isinstance(item, str):
+                parts.append(item)
+            elif isinstance(item, dict):
+                text = item.get("text")
+                if isinstance(text, str):
+                    parts.append(text)
+        return "".join(parts)
+    return str(content)
+
+
+def _extract_chat_content(data: dict[str, Any]) -> str:
+    choices = data.get("choices")
+    if not isinstance(choices, list) or not choices:
+        raise LLMError("missing choices")
+    choice = choices[0]
+    if not isinstance(choice, dict):
+        raise LLMError("invalid choice")
+    message = choice.get("message")
+    if isinstance(message, dict) and "content" in message:
+        return _content_to_text(message.get("content")).strip()
+    if "text" in choice:
+        return _content_to_text(choice.get("text")).strip()
+    raise LLMError("missing message.content")
+
+
 @dataclass
 class LLMClient:
     base_url: str = DEFAULT_LLM_BASE_URL
     api_key: str = ""
     model: str = "gpt-4.1-mini"
-    timeout: int = 60
+    timeout: float = 60
 
     @property
     def chat_url(self) -> str:
@@ -63,6 +100,8 @@ class LLMClient:
                 timeout=self.timeout,
             )
             resp.raise_for_status()
-            return resp.json()["choices"][0]["message"]["content"].strip()
+            return _extract_chat_content(resp.json())
+        except requests.exceptions.Timeout as e:
+            raise LLMTimeoutError(str(e)) from e
         except Exception as e:
             raise LLMError(str(e)) from e
