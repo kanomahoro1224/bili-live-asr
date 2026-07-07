@@ -56,17 +56,45 @@ def test_theme_subtitle_mode_and_settings_save(tmp_path, monkeypatch):
             "asr_language": "ja",
             "vad_threshold": "0.3",
             "tl_timeout": "12.5",
+            "translation_model_type": "qwen_mt",
+            "qwen_mt_base_url": "https://qwen.example/v1",
+            "qwen_mt_api_key": "qwen-key",
+            "qwen_mt_model": "qwen-mt-flash",
+            "qwen_mt_source_lang": "Japanese",
+            "qwen_mt_target_lang": "Chinese",
+            "qwen_mt_terms_enabled": True,
+            "qwen_mt_terms": [{"source": "鹿乃", "target": "Kano"}],
+            "qwen_mt_tm_list_enabled": True,
+            "qwen_mt_tm_list": [{"source": "おはよう", "target": "早上好"}],
+            "qwen_mt_domains_enabled": True,
+            "qwen_mt_domains": "Translate into a casual livestream subtitle style.",
             "unknown": "ignored",
         },
     )
     assert resp.json == {"ok": True}
     assert state.config["vad_threshold"] == 0.3
     assert state.config["tl_timeout"] == 12.5
+    assert state.config["translation_model_type"] == "qwen_mt"
     assert "unknown" not in state.config
     assert state.reload_event.is_set()
     loaded = json.loads(config_path.read_text(encoding="utf-8"))
     assert loaded["vad"]["vad_threshold"] == 0.3
     assert loaded["translation"]["tl_timeout"] == 12.5
+    assert loaded["translation"]["translation_model_type"] == "qwen_mt"
+    assert "qwen_mt_base_url" not in loaded["translation"]
+    assert loaded["qwen_mt"]["qwen_mt_base_url"] == "https://qwen.example/v1"
+    assert loaded["qwen_mt"]["qwen_mt_api_key"] == "qwen-key"
+    assert loaded["qwen_mt"]["qwen_mt_model"] == "qwen-mt-flash"
+    assert loaded["qwen_mt"]["qwen_mt_source_lang"] == "Japanese"
+    assert loaded["qwen_mt"]["qwen_mt_target_lang"] == "Chinese"
+    assert loaded["qwen_mt"]["qwen_mt_terms_enabled"] is True
+    assert loaded["qwen_mt"]["qwen_mt_terms"] == [{"source": "鹿乃", "target": "Kano"}]
+    assert loaded["qwen_mt"]["qwen_mt_tm_list_enabled"] is True
+    assert loaded["qwen_mt"]["qwen_mt_tm_list"] == [
+        {"source": "おはよう", "target": "早上好"}
+    ]
+    assert loaded["qwen_mt"]["qwen_mt_domains_enabled"] is True
+    assert loaded["qwen_mt"]["qwen_mt_domains"] == "Translate into a casual livestream subtitle style."
 
 
 def test_bili_room_toggle_send_and_export(tmp_path, monkeypatch):

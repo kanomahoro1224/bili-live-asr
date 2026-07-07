@@ -93,6 +93,120 @@ def test_translate_uses_configured_timeout_and_reraises_timeout(monkeypatch):
     assert calls == [12.0]
 
 
+def test_qwen_mt_uses_translation_options(monkeypatch):
+    calls = []
+
+    class Client:
+        requires_api_key = False
+
+        def __init__(self, base_url, api_key, model, timeout):
+            calls.append(
+                {
+                    "base_url": base_url,
+                    "api_key": api_key,
+                    "model": model,
+                    "timeout": timeout,
+                }
+            )
+
+        def chat(self, messages, **params):
+            calls.append({"messages": messages, "params": params})
+            return "你好"
+
+    monkeypatch.setattr("livetrans.translator.LLMClient", Client)
+    t = OpenAICompatibleTranslator()
+
+    out = t.translate(
+        ["こんにちは"],
+        {
+            "translation_model_type": "qwen_mt",
+            "llm_base_url": "https://llm.example/v1",
+            "llm_api_key": "llm-key",
+            "llm_model": "gpt-4.1-mini",
+            "qwen_mt_base_url": "https://qwen.example/v1",
+            "qwen_mt_api_key": "qwen-key",
+            "qwen_mt_model": "qwen-mt-flash",
+            "tl_timeout": 8,
+            "qwen_mt_source_lang": "Japanese",
+            "qwen_mt_target_lang": "Chinese",
+            "qwen_mt_terms_enabled": True,
+            "qwen_mt_terms": '[{"source":"鹿乃","target":"Kano"}]',
+            "qwen_mt_tm_list_enabled": True,
+            "qwen_mt_tm_list": '[{"source":"おはよう","target":"早上好"}]',
+            "qwen_mt_domains_enabled": True,
+            "qwen_mt_domains": "Translate into a casual livestream subtitle style.",
+        },
+    )
+
+    assert out == ["你好"]
+    assert calls[0] == {
+        "base_url": "https://qwen.example/v1",
+        "api_key": "qwen-key",
+        "model": "qwen-mt-flash",
+        "timeout": 8.0,
+    }
+    assert calls[1]["messages"] == [{"role": "user", "content": "こんにちは"}]
+    assert calls[1]["params"] == {
+        "extra_body": {
+            "translation_options": {
+                "source_lang": "Japanese",
+                "target_lang": "Chinese",
+                "terms": [{"source": "鹿乃", "target": "Kano"}],
+                "tm_list": [{"source": "おはよう", "target": "早上好"}],
+                "domains": "Translate into a casual livestream subtitle style.",
+            }
+        }
+    }
+
+
+def test_qwen_mt_requires_separate_base_url(monkeypatch):
+    class Client:
+        requires_api_key = False
+
+        def __init__(self, base_url, api_key, model, timeout):
+            raise AssertionError("client should not be built without qwen_mt_base_url")
+
+    monkeypatch.setattr("livetrans.translator.LLMClient", Client)
+    t = OpenAICompatibleTranslator()
+
+    assert t.translate(["こんにちは"], {"translation_model_type": "qwen_mt"}) == [
+        "【未配置Qwen MT URL】"
+    ]
+
+
+def test_qwen_mt_omits_disabled_enhancements(monkeypatch):
+    calls = []
+
+    class Client:
+        requires_api_key = False
+
+        def __init__(self, base_url, api_key, model, timeout):
+            pass
+
+        def chat(self, messages, **params):
+            calls.append(params)
+            return "你好"
+
+    monkeypatch.setattr("livetrans.translator.LLMClient", Client)
+    t = OpenAICompatibleTranslator()
+
+    assert t.translate(
+        ["こんにちは"],
+        {
+            "translation_model_type": "qwen_mt",
+            "qwen_mt_base_url": "https://qwen.example/v1",
+            "qwen_mt_api_key": "qwen-key",
+            "qwen_mt_terms": [{"source": "鹿乃", "target": "Kano"}],
+            "qwen_mt_tm_list": [{"source": "おはよう", "target": "早上好"}],
+            "qwen_mt_domains": "Translate into a casual livestream subtitle style.",
+        },
+    ) == ["你好"]
+    assert calls[0]["extra_body"]["translation_options"] == {
+        "source_lang": "Japanese",
+        "target_lang": "Chinese",
+    }
+
+
 def test_llm_client_normalizes_base_url():
     assert LLMClient(base_url="http://localhost:11434/v1").chat_url == (
         "http://localhost:11434/v1/chat/completions"

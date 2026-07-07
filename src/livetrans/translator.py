@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import collections
+import json
 from typing import Any
 
 from .llm import DEFAULT_LLM_BASE_URL, LLMClient, LLMError, LLMTimeoutError
@@ -54,6 +55,42 @@ def clean_translation_lines(content: str, expected: int) -> list[str]:
     return clean
 
 
+def _parse_json_list(value: Any) -> list[dict[str, Any]]:
+    if isinstance(value, list):
+        items = value
+    elif isinstance(value, str) and value.strip():
+        try:
+            items = json.loads(value)
+        except json.JSONDecodeError:
+            return []
+    else:
+        return []
+    if not isinstance(items, list):
+        return []
+    return [item for item in items if isinstance(item, dict)]
+
+
+def _build_qwen_mt_options(config: dict[str, Any]) -> dict[str, Any]:
+    options: dict[str, Any] = {
+        "source_lang": config.get("qwen_mt_source_lang") or "Japanese",
+        "target_lang": config.get("qwen_mt_target_lang") or "Chinese",
+    }
+    terms = _parse_json_list(config.get("qwen_mt_terms")) if config.get("qwen_mt_terms_enabled") else []
+    if terms:
+        options["terms"] = terms
+    tm_list = (
+        _parse_json_list(config.get("qwen_mt_tm_list"))
+        if config.get("qwen_mt_tm_list_enabled")
+        else []
+    )
+    if tm_list:
+        options["tm_list"] = tm_list
+    domains = str(config.get("qwen_mt_domains") or "").strip() if config.get("qwen_mt_domains_enabled") else ""
+    if domains:
+        options["domains"] = domains
+    return options
+
+
 class OpenAICompatibleTranslator:
     def __init__(self, max_context_buffer: int = 20):
         self.context_buffer: "collections.deque[dict[str, str]]" = collections.deque(
@@ -70,22 +107,65 @@ class OpenAICompatibleTranslator:
             lines.append(f"译文: {ctx['tran']}")
         return "\n".join(lines)
 
-    def translate(self, texts: list[str], config: dict[str, Any]) -> list[str]:
-        if not texts or texts == ["无"]:
-            return ["..."] * len(texts)
-        api_key = config.get("llm_api_key", "")
-        base_url = config.get("llm_base_url") or DEFAULT_LLM_BASE_URL
-        model = config.get("llm_model", "gpt-4.1-mini")
+    def _build_client(
+        self,
+        config: dict[str, Any],
+        *,
+        base_url_key: str = "llm_base_url",
+        api_key_key: str = "llm_api_key",
+        model_key: str = "llm_model",
+        default_model: str = "gpt-4.1-mini",
+    ) -> LLMClient:
+        api_key = config.get(api_key_key, "")
+        base_url = config.get(base_url_key) or DEFAULT_LLM_BASE_URL
+        model = config.get(model_key, default_model)
         try:
             timeout = max(1.0, float(config.get("tl_timeout", 30.0)))
         except (TypeError, ValueError):
             timeout = 30.0
-        client = LLMClient(
+        return LLMClient(
             base_url=base_url,
             api_key=api_key,
             model=model,
             timeout=timeout,
         )
+
+    def _translate_qwen_mt(self, texts: list[str], config: dict[str, Any]) -> list[str]:
+        if not config.get("qwen_mt_base_url"):
+            return ["【未配置Qwen MT URL】"] * len(texts)
+        client = self._build_client(
+            config,
+            base_url_key="qwen_mt_base_url",
+            api_key_key="qwen_mt_api_key",
+            model_key="qwen_mt_model",
+            default_model="qwen-mt-flash",
+        )
+        api_key = config.get("qwen_mt_api_key", "")
+        if client.requires_api_key and not api_key:
+            return ["【未配置Key】"] * len(texts)
+        options = _build_qwen_mt_options(config)
+        results: list[str] = []
+        for text in texts:
+            try:
+                content = client.chat(
+                    [{"role": "user", "content": text}],
+                    extra_body={"translation_options": options},
+                )
+            except LLMTimeoutError:
+                raise
+            except LLMError:
+                content = "(失败)"
+            results.append(content or "...")
+        return results
+
+    def translate(self, texts: list[str], config: dict[str, Any]) -> list[str]:
+        if not texts or texts == ["无"]:
+            return ["..."] * len(texts)
+        if config.get("translation_model_type") == "qwen_mt":
+            return self._translate_qwen_mt(texts, config)
+
+        client = self._build_client(config)
+        api_key = config.get("llm_api_key", "")
         if client.requires_api_key and not api_key:
             return ["【未配置Key】"] * len(texts)
 

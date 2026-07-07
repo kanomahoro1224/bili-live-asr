@@ -102,6 +102,30 @@
         .input-group { display: flex; gap: 10px; margin-bottom: 10px; }
         .btn-add { background: #374151; color: white; border: none; padding: 0 20px; border-radius: 6px; cursor: pointer; font-size: 13px; white-space: nowrap; }
         .btn-add:hover { background: #1f2937; }
+        .config-panel { background:#f8fafc; padding:15px; border-radius:8px; margin-bottom:20px; border:1px solid #e2e8f0; }
+        .config-panel-title { font-weight:bold; color:#1e293b; margin-bottom:10px; font-size:14px; }
+        .enhance-section { border-top: 1px solid #e5e7eb; padding-top: 14px; margin-top: 16px; }
+        .enhance-header { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 10px; }
+        .enhance-title { display: flex; align-items: center; gap: 8px; min-width: 0; font-size: 13px; font-weight: 800; color: #1f2937; }
+        .enhance-left { display: flex; align-items: center; gap: 8px; min-width: 0; }
+        .enhance-help { color: #6b7280; font-size: 12px; }
+        .enhance-toggle { width: 34px; height: 20px; border: none; border-radius: 999px; background: #c7cbd1; padding: 2px; cursor: pointer; transition: background .15s ease; flex: 0 0 auto; }
+        .enhance-toggle::after { content: ""; display: block; width: 16px; height: 16px; border-radius: 50%; background: #fff; transition: transform .15s ease; box-shadow: 0 1px 2px rgba(15,23,42,.2); }
+        .enhance-toggle.active { background: var(--primary); }
+        .enhance-toggle.active::after { transform: translateX(14px); }
+        .enhance-collapse { border: none; background: transparent; color: #334155; font-size: 18px; line-height: 1; cursor: pointer; padding: 2px 4px; }
+        .enhance-body.collapsed { display: none; }
+        .qwen-pair-row { display: grid; grid-template-columns: 1fr 28px 1fr 28px; gap: 8px; align-items: end; margin-bottom: 8px; }
+        .qwen-memory-row { display: grid; grid-template-columns: 22px 1fr 28px; gap: 8px; align-items: center; padding: 10px; margin-bottom: 8px; background: #fff; border: 1px solid #eef2f7; border-radius: 6px; }
+        .qwen-memory-fields { display: grid; gap: 8px; }
+        .qwen-field-label { color: #64748b; font-size: 12px; margin-bottom: 4px; }
+        .qwen-pair-index { color: #4f46e5; font-size: 13px; font-weight: 700; text-align: center; }
+        .qwen-swap { color: #64748b; font-size: 16px; text-align: center; padding-bottom: 9px; }
+        .qwen-remove { width: 28px; height: 28px; border: none; background: transparent; color: #94a3b8; border-radius: 6px; cursor: pointer; font-weight: 800; }
+        .qwen-remove:hover { background: #fee2e2; color: #dc2626; }
+        .qwen-add { border: none; background: transparent; color: var(--primary); font-size: 13px; font-weight: 700; cursor: pointer; padding: 4px 0; }
+        .qwen-add:hover { text-decoration: underline; }
+        .qwen-domain-count { text-align: right; color: #94a3b8; font-size: 12px; margin-top: 4px; }
         .tag-container { display: flex; flex-wrap: wrap; gap: 8px; min-height: 40px; align-content: flex-start; }
         .tag-item { background: #e5e7eb; color: #374151; padding: 6px 12px; border-radius: 4px; font-size: 13px; font-weight: 500; display: inline-flex; align-items: center; gap: 8px; }
         .tag-close { cursor: pointer; color: #9ca3af; font-weight: bold; font-size: 14px; line-height: 1; }
@@ -206,6 +230,7 @@
             <div class="sidebar">
                 <div class="sidebar-title">设置菜单</div>
                 <div class="tab-btn active" onclick="switchTab('general', this)">常规设置</div>
+                <div class="tab-btn" onclick="switchTab('translation', this)">翻译配置</div>
                 <div class="tab-btn" onclick="switchTab('vad', this)">VAD 参数</div>
                 <div class="tab-btn" onclick="switchTab('filter', this)">过滤设置</div>
                 <div class="tab-btn" onclick="switchTab('logs', this)">运行日志</div>
@@ -295,6 +320,9 @@
                         </div>
                     </div>
 
+                </div>
+
+                <div id="tab-translation" class="tab-content">
                     <div class="form-group">
                         <label class="form-label">主播类型</label>
                         <input id="set_streamer_type" class="form-input" placeholder="例如：Vtuber" />
@@ -312,30 +340,104 @@
                         <textarea id="set_prompt_extra" class="form-input" style="height:60px;resize:vertical;" placeholder="补充术语、语气、翻译偏好"></textarea>
                     </div>
                     <div class="form-group">
-                        <label class="form-label">LLM Base URL</label>
-                        <input id="set_llm_base_url" class="form-input" placeholder="https://api.openai.com/v1" />
-                        <div class="form-helper">OpenAI 兼容接口地址。</div>
+                        <label class="form-label">翻译模型类型</label>
+                        <input type="hidden" id="set_translation_model_type" value="llm">
+                        <div class="mode-toggle">
+                            <button type="button" class="mode-option" data-translation-model-type="llm" onclick="setTranslationModelType('llm')">LLM</button>
+                            <button type="button" class="mode-option" data-translation-model-type="qwen_mt" onclick="setTranslationModelType('qwen_mt')">千问 MT</button>
+                        </div>
                     </div>
-                    <div class="form-group">
-                        <label class="form-label">LLM API Key</label>
-                        <input type="password" id="set_llm_api_key" class="form-input" placeholder="sk-..." />
+                    <div id="llmSettings" style="background:#f8fafc; padding:15px; border-radius:8px; margin-bottom:20px; border:1px solid #e2e8f0;">
+                        <div style="font-weight:bold; color:#1e293b; margin-bottom:10px; font-size:14px;">LLM 设置</div>
+                        <div class="form-group">
+                            <label class="form-label">LLM Base URL</label>
+                            <input id="set_llm_base_url" class="form-input" placeholder="https://api.openai.com/v1" />
+                            <div class="form-helper">OpenAI 兼容接口地址。</div>
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label">LLM API Key</label>
+                            <input type="password" id="set_llm_api_key" class="form-input" placeholder="sk-..." />
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label">LLM 模型</label>
+                            <input id="set_llm_model" class="form-input" placeholder="gpt-4.1-mini" />
+                        </div>
+                        <div class="form-group" style="margin-bottom:0;">
+                            <label class="form-label">LLM 思考模式</label>
+                            <input type="hidden" id="set_llm_thinking_enabled" value="false">
+                            <div class="mode-toggle">
+                                <button type="button" class="mode-option" data-thinking-group="llm" data-value="false" onclick="setThinkingMode('llm', false)">关闭</button>
+                                <button type="button" class="mode-option" data-thinking-group="llm" data-value="true" onclick="setThinkingMode('llm', true)">开启</button>
+                            </div>
+                        </div>
                     </div>
-                    <div class="form-group">
-                        <label class="form-label">LLM 模型</label>
-                        <input id="set_llm_model" class="form-input" placeholder="gpt-4.1-mini" />
+                    <div id="qwenMtSettings" style="display:none;background:#f8fafc; padding:15px; border-radius:8px; margin-bottom:20px; border:1px solid #e2e8f0;">
+                        <div style="font-weight:bold; color:#1e293b; margin-bottom:10px; font-size:14px;">千问 MT 设置</div>
+                        <div class="form-group">
+                            <label class="form-label">千问 MT Base URL</label>
+                            <input id="set_qwen_mt_base_url" class="form-input" placeholder="https://{WorkspaceId}.cn-beijing.maas.aliyuncs.com/compatible-mode/v1" />
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label">千问 MT API Key</label>
+                            <input type="password" id="set_qwen_mt_api_key" class="form-input" placeholder="sk-..." />
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label">千问 MT 模型</label>
+                            <input id="set_qwen_mt_model" class="form-input" placeholder="qwen-mt-flash" />
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label">源语种 source_lang</label>
+                            <input id="set_qwen_mt_source_lang" class="form-input" placeholder="Japanese / ja / auto" />
+                            <div class="form-helper">不确定源语种时填 auto；固定日语建议填 Japanese。</div>
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label">目标语种 target_lang</label>
+                            <input id="set_qwen_mt_target_lang" class="form-input" placeholder="Chinese / zh" />
+                        </div>
+                        <div class="enhance-section">
+                            <div class="enhance-header">
+                                <div class="enhance-left">
+                                    <div class="enhance-title">术语干预 terms <span class="enhance-help" title="开启后通过 translation_options.terms 传入术语表">?</span></div>
+                                    <button type="button" id="qwenTermsToggle" class="enhance-toggle" onclick="toggleQwenEnhance('terms')"></button>
+                                </div>
+                                <button type="button" class="enhance-collapse" onclick="toggleEnhanceBody('qwenTermsBody')">⌄</button>
+                            </div>
+                            <div id="qwenTermsBody" class="enhance-body">
+                                <div id="qwenTermsList"></div>
+                                <button type="button" class="qwen-add" onclick="addQwenPair('terms')">+ 新增 <span id="qwenTermsCount">(0/10)</span></button>
+                            </div>
+                        </div>
+                        <div class="enhance-section">
+                            <div class="enhance-header">
+                                <div class="enhance-left">
+                                    <div class="enhance-title">翻译记忆 tm_list <span class="enhance-help" title="开启后通过 translation_options.tm_list 传入源文-译文参考">?</span></div>
+                                    <button type="button" id="qwenTmToggle" class="enhance-toggle" onclick="toggleQwenEnhance('tm')"></button>
+                                </div>
+                                <button type="button" class="enhance-collapse" onclick="toggleEnhanceBody('qwenTmBody')">⌄</button>
+                            </div>
+                            <div id="qwenTmBody" class="enhance-body">
+                                <div id="qwenTmList"></div>
+                                <button type="button" class="qwen-add" onclick="addQwenPair('tm')">+ 新增 <span id="qwenTmCount">(0/5)</span></button>
+                            </div>
+                        </div>
+                        <div class="enhance-section">
+                            <div class="enhance-header">
+                                <div class="enhance-left">
+                                    <div class="enhance-title">领域提示 domains <span class="enhance-help" title="文档要求领域提示当前只支持英文">?</span></div>
+                                    <button type="button" id="qwenDomainsToggle" class="enhance-toggle" onclick="toggleQwenEnhance('domains')"></button>
+                                </div>
+                                <button type="button" class="enhance-collapse" onclick="toggleEnhanceBody('qwenDomainsBody')">⌄</button>
+                            </div>
+                            <div id="qwenDomainsBody" class="enhance-body">
+                                <textarea id="set_qwen_mt_domains" class="form-input" maxlength="500" style="height:96px;resize:vertical;" oninput="updateQwenDomainCount()" placeholder="Translate into a casual livestream subtitle style."></textarea>
+                                <div class="qwen-domain-count"><span id="qwenDomainsCount">0</span> / 500</div>
+                            </div>
+                        </div>
                     </div>
                     <div class="form-group">
                         <label class="form-label">TL 超时时间（秒）</label>
                         <input type="number" id="set_tl_timeout" class="form-input" step="1" min="1" placeholder="30" />
                         <div class="form-helper">单条翻译超过该时间会丢弃，不显示失败占位。</div>
-                    </div>
-                    <div class="form-group">
-                        <label class="form-label">LLM 思考模式</label>
-                        <input type="hidden" id="set_llm_thinking_enabled" value="false">
-                        <div class="mode-toggle">
-                            <button type="button" class="mode-option" data-thinking-group="llm" data-value="false" onclick="setThinkingMode('llm', false)">关闭</button>
-                            <button type="button" class="mode-option" data-thinking-group="llm" data-value="true" onclick="setThinkingMode('llm', true)">开启</button>
-                        </div>
                     </div>
                     <div style="background:#f8fafc; padding:15px; border-radius:8px; margin-bottom:20px; border:1px solid #e2e8f0;">
                         <div style="font-weight:bold; color:#1e293b; margin-bottom:10px; font-size:14px;">字幕审核</div>
@@ -435,6 +537,9 @@
     let biliPollTimer = null;
     let biliQrKey = "";
     let biliLoggedIn = false;
+    let qwenMtTerms = [];
+    let qwenMtTmList = [];
+    const qwenMtEnhance = { terms: false, tm: false, domains: false };
 
     const resizer = document.getElementById('dragMe'), left = document.getElementById('leftPanel'), con = document.getElementById('container'), iframe = document.getElementById('liveFrame');
     let x=0, w=0;
@@ -479,6 +584,104 @@
         b.scrollTop = b.scrollHeight;
         setJumpBottomVisible(false);
     }
+    function normalizePairList(value) {
+        if(Array.isArray(value)) return value.filter(v => v && typeof v === 'object');
+        if(typeof value === 'string' && value.trim()) {
+            try {
+                const parsed = JSON.parse(value);
+                return Array.isArray(parsed) ? parsed.filter(v => v && typeof v === 'object') : [];
+            } catch(e) {
+                return [];
+            }
+        }
+        return [];
+    }
+    function escAttr(s) {
+        return esc(String(s || '')).replace(/"/g, '&quot;');
+    }
+    function qwenList(kind) {
+        return kind === 'tm' ? qwenMtTmList : qwenMtTerms;
+    }
+    function renderQwenPairs(kind) {
+        const list = qwenList(kind);
+        const isTm = kind === 'tm';
+        const box = document.getElementById(isTm ? 'qwenTmList' : 'qwenTermsList');
+        const max = isTm ? 5 : 10;
+        box.innerHTML = list.map((item, i) => {
+            const source = escAttr(item.source || '');
+            const target = escAttr(item.target || '');
+            if(isTm) {
+                return `<div class="qwen-memory-row">
+                    <div class="qwen-pair-index">${i + 1}</div>
+                    <div class="qwen-memory-fields">
+                        <div>
+                            <div class="qwen-field-label">source</div>
+                            <textarea class="form-input" style="height:54px;resize:vertical;" oninput="updateQwenPair('tm', ${i}, 'source', this.value)">${source}</textarea>
+                        </div>
+                        <div>
+                            <div class="qwen-field-label">target</div>
+                            <textarea class="form-input" style="height:54px;resize:vertical;" oninput="updateQwenPair('tm', ${i}, 'target', this.value)">${target}</textarea>
+                        </div>
+                    </div>
+                    <button type="button" class="qwen-remove" onclick="removeQwenPair('tm', ${i})">×</button>
+                </div>`;
+            }
+            return `<div class="qwen-pair-row">
+                <div>
+                    <div class="qwen-field-label">source</div>
+                    <input class="form-input" value="${source}" oninput="updateQwenPair('terms', ${i}, 'source', this.value)" />
+                </div>
+                <div class="qwen-swap">⇄</div>
+                <div>
+                    <div class="qwen-field-label">target</div>
+                    <input class="form-input" value="${target}" oninput="updateQwenPair('terms', ${i}, 'target', this.value)" />
+                </div>
+                <button type="button" class="qwen-remove" onclick="removeQwenPair('terms', ${i})">×</button>
+            </div>`;
+        }).join('');
+        document.getElementById(isTm ? 'qwenTmCount' : 'qwenTermsCount').innerText = `(${list.length}/${max})`;
+    }
+    function setQwenPairs(kind, value) {
+        if(kind === 'tm') qwenMtTmList = normalizePairList(value);
+        else qwenMtTerms = normalizePairList(value);
+        renderQwenPairs(kind);
+    }
+    function updateQwenPair(kind, index, key, value) {
+        const list = qwenList(kind);
+        if(!list[index]) return;
+        list[index][key] = value;
+    }
+    function addQwenPair(kind) {
+        const list = qwenList(kind);
+        const max = kind === 'tm' ? 5 : 10;
+        if(list.length >= max) return;
+        list.push({source: '', target: ''});
+        renderQwenPairs(kind);
+    }
+    function removeQwenPair(kind, index) {
+        qwenList(kind).splice(index, 1);
+        renderQwenPairs(kind);
+    }
+    function cleanQwenPairs(kind) {
+        return qwenList(kind)
+            .map(item => ({source: String(item.source || '').trim(), target: String(item.target || '').trim()}))
+            .filter(item => item.source || item.target);
+    }
+    function setQwenEnhance(kind, enabled) {
+        qwenMtEnhance[kind] = !!enabled;
+        const id = kind === 'terms' ? 'qwenTermsToggle' : (kind === 'tm' ? 'qwenTmToggle' : 'qwenDomainsToggle');
+        document.getElementById(id).classList.toggle('active', qwenMtEnhance[kind]);
+    }
+    function toggleQwenEnhance(kind) {
+        setQwenEnhance(kind, !qwenMtEnhance[kind]);
+    }
+    function toggleEnhanceBody(id) {
+        document.getElementById(id).classList.toggle('collapsed');
+    }
+    function updateQwenDomainCount() {
+        const text = document.getElementById('set_qwen_mt_domains').value || '';
+        document.getElementById('qwenDomainsCount').innerText = text.length;
+    }
     function setSendStatus(control, text, state) {
         const status = control.querySelector('.send-status');
         status.textContent = text;
@@ -497,7 +700,7 @@
     }
     function applySubtitleMode(mode) {
         const activeMode = mode === 'auto' ? 'auto' : 'manual';
-        document.querySelectorAll('.mode-option').forEach(btn => {
+        document.querySelectorAll('#subtitleModeToggle .mode-option').forEach(btn => {
             btn.classList.toggle('active', btn.dataset.mode === activeMode);
         });
     }
@@ -802,8 +1005,21 @@
             document.getElementById('set_llm_base_url').value = c.llm_base_url||'https://api.openai.com/v1';
             document.getElementById('set_llm_api_key').value = c.llm_api_key||'';
             document.getElementById('set_llm_model').value = c.llm_model||'gpt-4.1-mini';
+            setTranslationModelType(c.translation_model_type === 'qwen_mt' ? 'qwen_mt' : 'llm');
             document.getElementById('set_tl_timeout').value = c.tl_timeout||30;
             setThinkingMode('llm', !!c.llm_thinking_enabled);
+            document.getElementById('set_qwen_mt_base_url').value = c.qwen_mt_base_url||'';
+            document.getElementById('set_qwen_mt_api_key').value = c.qwen_mt_api_key||'';
+            document.getElementById('set_qwen_mt_model').value = c.qwen_mt_model||'qwen-mt-flash';
+            document.getElementById('set_qwen_mt_source_lang').value = c.qwen_mt_source_lang||'Japanese';
+            document.getElementById('set_qwen_mt_target_lang').value = c.qwen_mt_target_lang||'Chinese';
+            setQwenEnhance('terms', !!c.qwen_mt_terms_enabled);
+            setQwenPairs('terms', c.qwen_mt_terms);
+            setQwenEnhance('tm', !!c.qwen_mt_tm_list_enabled);
+            setQwenPairs('tm', c.qwen_mt_tm_list);
+            setQwenEnhance('domains', !!c.qwen_mt_domains_enabled);
+            document.getElementById('set_qwen_mt_domains').value = c.qwen_mt_domains||'';
+            updateQwenDomainCount();
             document.getElementById('set_subtitle_review_base_url').value = c.subtitle_review_base_url||'';
             document.getElementById('set_subtitle_review_api_key').value = c.subtitle_review_api_key||'';
             document.getElementById('set_subtitle_review_model').value = c.subtitle_review_model||'';
@@ -832,6 +1048,16 @@
         });
     }
 
+    function setTranslationModelType(type) {
+        const value = type === 'qwen_mt' ? 'qwen_mt' : 'llm';
+        document.getElementById('set_translation_model_type').value = value;
+        document.querySelectorAll('[data-translation-model-type]').forEach(btn => {
+            btn.classList.toggle('active', btn.dataset.translationModelType === value);
+        });
+        document.getElementById('llmSettings').style.display = value === 'llm' ? 'block' : 'none';
+        document.getElementById('qwenMtSettings').style.display = value === 'qwen_mt' ? 'block' : 'none';
+    }
+
     async function saveSettings() {
         await fetch('/settings', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({
             theme_color: document.getElementById('set_theme_color').value,
@@ -851,8 +1077,20 @@
             llm_base_url: document.getElementById('set_llm_base_url').value,
             llm_api_key: document.getElementById('set_llm_api_key').value,
             llm_model: document.getElementById('set_llm_model').value,
+            translation_model_type: document.getElementById('set_translation_model_type').value,
             tl_timeout: parseFloat(document.getElementById('set_tl_timeout').value) || 30,
             llm_thinking_enabled: document.getElementById('set_llm_thinking_enabled').value === 'true',
+            qwen_mt_base_url: document.getElementById('set_qwen_mt_base_url').value,
+            qwen_mt_api_key: document.getElementById('set_qwen_mt_api_key').value,
+            qwen_mt_model: document.getElementById('set_qwen_mt_model').value,
+            qwen_mt_source_lang: document.getElementById('set_qwen_mt_source_lang').value,
+            qwen_mt_target_lang: document.getElementById('set_qwen_mt_target_lang').value,
+            qwen_mt_terms_enabled: qwenMtEnhance.terms,
+            qwen_mt_terms: cleanQwenPairs('terms'),
+            qwen_mt_tm_list_enabled: qwenMtEnhance.tm,
+            qwen_mt_tm_list: cleanQwenPairs('tm'),
+            qwen_mt_domains_enabled: qwenMtEnhance.domains,
+            qwen_mt_domains: document.getElementById('set_qwen_mt_domains').value,
             subtitle_review_base_url: document.getElementById('set_subtitle_review_base_url').value,
             subtitle_review_api_key: document.getElementById('set_subtitle_review_api_key').value,
             subtitle_review_model: document.getElementById('set_subtitle_review_model').value,

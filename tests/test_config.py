@@ -69,8 +69,17 @@ def test_save_is_atomic_and_roundtrips(tmp_path):
     assert loaded["translation"]["game_hint"] == "测试杂谈"
     assert loaded["translation"]["streamer_type"] == DEFAULT_CONFIG["streamer_type"]
     assert loaded["translation"]["streamer_name"] == DEFAULT_CONFIG["streamer_name"]
+    assert loaded["translation"]["translation_model_type"] == DEFAULT_CONFIG["translation_model_type"]
     assert loaded["translation"]["subtitle_send_mode"] == DEFAULT_CONFIG["subtitle_send_mode"]
     assert loaded["translation"]["subtitle_min_interval"] == DEFAULT_CONFIG["subtitle_min_interval"]
+    assert loaded["qwen_mt"]["qwen_mt_base_url"] == DEFAULT_CONFIG["qwen_mt_base_url"]
+    assert loaded["qwen_mt"]["qwen_mt_api_key"] == DEFAULT_CONFIG["qwen_mt_api_key"]
+    assert loaded["qwen_mt"]["qwen_mt_model"] == DEFAULT_CONFIG["qwen_mt_model"]
+    assert loaded["qwen_mt"]["qwen_mt_source_lang"] == DEFAULT_CONFIG["qwen_mt_source_lang"]
+    assert loaded["qwen_mt"]["qwen_mt_target_lang"] == DEFAULT_CONFIG["qwen_mt_target_lang"]
+    assert loaded["qwen_mt"]["qwen_mt_terms_enabled"] is False
+    assert loaded["qwen_mt"]["qwen_mt_tm_list_enabled"] is False
+    assert loaded["qwen_mt"]["qwen_mt_domains_enabled"] is False
     assert loaded["asr"]["dashscope_api_key"] == DEFAULT_CONFIG["dashscope_api_key"]
     assert loaded["asr"]["remote_asr_model"] == DEFAULT_CONFIG["remote_asr_model"]
     assert loaded["asr"]["remote_realtime_asr_model"] == DEFAULT_CONFIG["remote_realtime_asr_model"]

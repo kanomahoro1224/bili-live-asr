@@ -85,3 +85,31 @@ def test_llm_client_raises_timeout_error(monkeypatch):
 
     with pytest.raises(LLMTimeoutError):
         LLMClient(base_url="http://localhost:11434/v1", timeout=1).chat([])
+
+
+def test_llm_client_merges_extra_body_into_payload(monkeypatch):
+    captured = {}
+
+    def fake_post(*args, **kwargs):
+        captured.update(kwargs["json"])
+        return Resp({"choices": [{"message": {"content": "ok"}}]})
+
+    monkeypatch.setattr(llm.requests, "post", fake_post)
+
+    assert (
+        LLMClient(base_url="http://localhost:11434/v1").chat(
+            [{"role": "user", "content": "こんにちは"}],
+            extra_body={
+                "translation_options": {
+                    "source_lang": "Japanese",
+                    "target_lang": "Chinese",
+                }
+            },
+        )
+        == "ok"
+    )
+    assert captured["translation_options"] == {
+        "source_lang": "Japanese",
+        "target_lang": "Chinese",
+    }
+    assert "extra_body" not in captured

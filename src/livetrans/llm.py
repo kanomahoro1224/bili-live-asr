@@ -83,11 +83,14 @@ class LLMClient:
         if self.requires_api_key and not self.api_key:
             raise LLMError("missing api key")
 
+        extra_body = params.pop("extra_body", None)
         payload: dict[str, Any] = {
             "model": self.model,
             "messages": messages,
             **params,
         }
+        if isinstance(extra_body, dict):
+            payload.update(extra_body)
         headers = {"Content-Type": "application/json"}
         if self.api_key:
             headers["Authorization"] = f"Bearer {self.api_key}"

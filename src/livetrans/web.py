@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import time
 
@@ -317,6 +318,17 @@ def create_web(state):
                         continue
                 elif isinstance(default, str):
                     if not (isinstance(v, str) and len(v) < 10000):
+                        continue
+                elif isinstance(default, list):
+                    if isinstance(v, str):
+                        if not v.strip():
+                            v = []
+                        else:
+                            try:
+                                v = json.loads(v)
+                            except json.JSONDecodeError:
+                                continue
+                    if not isinstance(v, list):
                         continue
                 if k == "max_record_time":
                     config["max_speech_duration"] = v
