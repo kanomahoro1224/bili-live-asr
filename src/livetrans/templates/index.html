@@ -318,6 +318,18 @@
                                 <input type="number" id="set_remote_realtime_asr_timeout" class="form-input" step="0.5" min="1" placeholder="8" />
                             </div>
                         </div>
+                        <div class="form-group">
+                            <label class="form-label">增量 ASR 切句</label>
+                            <select id="set_incremental_asr" class="form-input" onchange="toggleInterimSettings()">
+                                <option value="false">关闭（与 LiveTranslate-main 当前用户设置一致）</option>
+                                <option value="true">开启，长语音中途按完整句提交</option>
+                            </select>
+                            <div class="form-helper">远程实时 ASR 不适用；开启后会在 VAD 未最终切段前尝试 ASR 并按句子提交。</div>
+                        </div>
+                        <div class="form-group" id="interimSettings">
+                            <label class="form-label">增量检查间隔（秒）</label>
+                            <input type="number" id="set_interim_interval" class="form-input" step="0.5" min="1" max="10" placeholder="2" />
+                        </div>
                     </div>
 
                 </div>
@@ -475,7 +487,7 @@
                         </div>
                         <div class="form-group">
                             <label class="form-label">上下文窗口大小</label>
-                            <input type="number" id="set_context_window_size" class="form-input" min="1" max="20" placeholder="5" />
+                            <input type="number" id="set_context_window_size" class="form-input" min="1" max="20" placeholder="10" />
                         </div>
                     </div>
 
@@ -958,6 +970,14 @@
         document.getElementById('remoteCommonSettings').style.display = isRemote ? 'block' : 'none';
         document.getElementById('remoteAsrSettings').style.display = engine === 'remote_asr' ? 'block' : 'none';
         document.getElementById('remoteRealtimeAsrSettings').style.display = engine === 'remote_realtime_asr' ? 'block' : 'none';
+        toggleInterimSettings();
+    }
+
+    function toggleInterimSettings() {
+        const engine = document.getElementById('set_asr_engine').value;
+        const enabled = document.getElementById('set_incremental_asr').value === 'true';
+        document.getElementById('interimSettings').style.display =
+            enabled && engine !== 'remote_realtime_asr' ? 'block' : 'none';
     }
 
     async function loadAsrDevices(selected) {
@@ -998,6 +1018,8 @@
             document.getElementById('set_remote_realtime_asr_model').value = c.remote_realtime_asr_model||c.remote_asr_model||'qwen3-asr-flash-realtime';
             document.getElementById('set_remote_realtime_asr_url').value = c.remote_realtime_asr_url||c.remote_asr_url||'wss://dashscope.aliyuncs.com/api-ws/v1/realtime';
             document.getElementById('set_remote_realtime_asr_timeout').value = c.remote_realtime_asr_timeout||c.remote_asr_timeout||8;
+            document.getElementById('set_incremental_asr').value = c.incremental_asr ? 'true' : 'false';
+            document.getElementById('set_interim_interval').value = c.interim_interval||2;
             document.getElementById('set_streamer_type').value = c.streamer_type||'Vtuber';
             document.getElementById('set_streamer_name').value = c.streamer_name||'鹿乃';
             document.getElementById('set_game_hint').value = c.game_hint||'';
@@ -1025,7 +1047,7 @@
             document.getElementById('set_subtitle_review_model').value = c.subtitle_review_model||'';
             setThinkingMode('subtitle_review', !!c.subtitle_review_thinking_enabled);
             document.getElementById('set_use_translation_context').value = c.use_translation_context !== false ? 'true' : 'false';
-            document.getElementById('set_context_window_size').value = c.context_window_size||5;
+            document.getElementById('set_context_window_size').value = c.context_window_size||10;
             document.getElementById('set_vad_threshold').value = c.vad_threshold||0.5;
             document.getElementById('set_min_speech_duration').value = c.min_speech_duration||1.0;
             document.getElementById('set_max_record_time').value = c.max_record_time||8;
@@ -1070,6 +1092,8 @@
             remote_realtime_asr_model: document.getElementById('set_remote_realtime_asr_model').value,
             remote_realtime_asr_url: document.getElementById('set_remote_realtime_asr_url').value,
             remote_realtime_asr_timeout: parseFloat(document.getElementById('set_remote_realtime_asr_timeout').value) || 8,
+            incremental_asr: document.getElementById('set_incremental_asr').value === 'true',
+            interim_interval: parseFloat(document.getElementById('set_interim_interval').value) || 2,
             streamer_type: document.getElementById('set_streamer_type').value,
             streamer_name: document.getElementById('set_streamer_name').value,
             game_hint: document.getElementById('set_game_hint').value,
@@ -1096,7 +1120,7 @@
             subtitle_review_model: document.getElementById('set_subtitle_review_model').value,
             subtitle_review_thinking_enabled: document.getElementById('set_subtitle_review_thinking_enabled').value === 'true',
             use_translation_context: document.getElementById('set_use_translation_context').value === 'true',
-            context_window_size: parseInt(document.getElementById('set_context_window_size').value) || 5,
+            context_window_size: parseInt(document.getElementById('set_context_window_size').value) || 10,
             vad_threshold: parseFloat(document.getElementById('set_vad_threshold').value),
             min_speech_duration: parseFloat(document.getElementById('set_min_speech_duration').value),
             max_record_time: parseFloat(document.getElementById('set_max_record_time').value),

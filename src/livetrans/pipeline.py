@@ -12,6 +12,9 @@ import queue
 import threading
 import time
 
+import numpy as np
+import pysbd
+
 from . import audio, filters, security, storage
 from .ffmpeg import require_ffmpeg
 from .llm import DEFAULT_LLM_BASE_URL, LLMClient, LLMError, LLMTimeoutError
@@ -23,6 +26,8 @@ __all__ = ["run_worker_loop"]
 
 _TRANSLATION_QUEUE_SIZE = 16
 _SUBTITLE_QUEUE_SIZE = 32
+_INTERIM_MIN_BUFFER_SECONDS = 1.5
+_PYSBD_CACHE: dict[str, pysbd.Segmenter] = {}
 
 
 def _config_snapshot(state) -> dict:
@@ -57,6 +62,49 @@ def _build_vad(config: dict):
 
 def _is_remote_realtime_asr(config: dict) -> bool:
     return config.get("asr_engine") in ("remote_realtime_asr", "qwen_asr")
+
+
+def _get_segmenter(lang: str):
+    if lang not in _PYSBD_CACHE:
+        pysbd_lang = lang if lang in pysbd.languages.LANGUAGE_CODES else "en"
+        _PYSBD_CACHE[lang] = pysbd.Segmenter(language=pysbd_lang, clean=False)
+    return _PYSBD_CACHE[lang]
+
+
+def _split_sentences(text: str, lang: str = "en") -> list[str]:
+    """Split text using LiveTranslate-main's pysbd + long-comma fallback."""
+    segmenter = _get_segmenter(lang)
+    parts = [p for p in segmenter.segment(text) if p.strip()]
+
+    if len(parts) > 1:
+        return parts
+
+    min_len = 25 if any(c == "、" for c in text) else 60
+    if len(text) > min_len:
+        for i in range(len(text) - 8, 5, -1):
+            if text[i] in ",，;；、":
+                before = text[: i + 1].strip()
+                after = text[i + 1 :].strip()
+                if before and after and len(before) > 15 and len(after) > 3:
+                    return [before, after]
+    return parts
+
+
+def _is_short_utterance(text: str) -> bool:
+    return sum(1 for c in text if c.isalnum()) <= 8
+
+
+def _strip_committed_overlap(text: str, committed_tail: str) -> str:
+    if not committed_tail:
+        return text
+    tail = committed_tail.lower().rstrip()
+    text_lower = text.lower()
+    max_check = min(len(tail), len(text_lower))
+    for overlap_len in range(max_check, 2, -1):
+        if text_lower[:overlap_len] == tail[-overlap_len:]:
+            stripped = text[overlap_len:].strip()
+            return stripped if stripped else ""
+    return text
 
 
 def _build_asr(config: dict, current_dir: str):
@@ -347,6 +395,161 @@ def _handle_asr_result(state, translation_queue: queue.Queue, result: dict, asr_
     _enqueue_translation(translation_queue, [text], time.time(), asr_ms)
 
 
+def _transcribe_segment(state, translation_queue: queue.Queue, asr_engine, segment) -> bool:
+    try:
+        asr_start = time.perf_counter()
+        result = asr_engine.transcribe(segment)
+        asr_ms = int(round((time.perf_counter() - asr_start) * 1000))
+    except Exception as e:
+        log("Error", f"ASR 识别出错: {e}")
+        return False
+    if not result or not result.get("text"):
+        return False
+    _handle_asr_result(state, translation_queue, result, asr_ms)
+    return True
+
+
+def _do_interim_asr(state, translation_queue: queue.Queue, asr_engine, vad, interim: dict) -> bool:
+    peek = vad.peek_buffer()
+    if peek is None:
+        return False
+    audio_buf, duration = peek
+    if duration < _INTERIM_MIN_BUFFER_SECONDS:
+        return False
+
+    try:
+        asr_start = time.perf_counter()
+        result = asr_engine.transcribe(audio_buf)
+        asr_ms = int(round((time.perf_counter() - asr_start) * 1000))
+    except Exception as e:
+        log("Error", f"Interim ASR 识别出错: {e}")
+        return False
+
+    if not result or not result.get("text"):
+        return False
+    full_text = str(result.get("text") or "").strip()
+    if not full_text or not any(c.isalnum() for c in full_text):
+        return False
+
+    full_text = _strip_committed_overlap(full_text, str(interim.get("committed_tail") or ""))
+    if not full_text:
+        return False
+
+    split_start = time.perf_counter()
+    sentences = _split_sentences(full_text, str(result.get("language") or "en"))
+    split_ms = (time.perf_counter() - split_start) * 1000
+    if len(sentences) <= 1:
+        return False
+    log("ASR", f"Interim split ({split_ms:.1f}ms): {len(sentences)} parts")
+
+    complete = sentences[:-1]
+    committed_text = "".join(complete)
+    if not committed_text.strip():
+        return False
+
+    actually_committed = False
+    pending = str(interim.get("pending") or "")
+    for sent in complete:
+        text = sent.strip()
+        if not text:
+            continue
+        if _is_short_utterance(text):
+            pending += text
+            continue
+        if pending:
+            text = pending + text
+            pending = ""
+        _handle_asr_result(
+            state,
+            translation_queue,
+            {"text": text, "language": result.get("language", "auto")},
+            asr_ms,
+        )
+        actually_committed = True
+
+    interim["pending"] = pending
+    if not actually_committed:
+        return False
+
+    total_samples = len(audio_buf)
+    ratio = len(committed_text) / max(len(full_text), 1)
+    trim_samples = int(ratio * total_samples) + int(0.3 * audio.SAMPLE_RATE)
+    max_trim = total_samples - int(0.5 * audio.SAMPLE_RATE)
+    trim_samples = min(trim_samples, max(max_trim, 0))
+    min_trim = int(0.3 * audio.SAMPLE_RATE)
+    if 0 < trim_samples < min_trim:
+        trim_samples = min(min_trim, total_samples // 2)
+    if trim_samples > 0:
+        vad.trim_front(trim_samples)
+
+    interim["active"] = True
+    interim["committed_tail"] = committed_text[-50:] if len(committed_text) > 50 else committed_text
+    log("ASR", f"Interim ASR 已提交 {len(complete)} 句，裁剪 {trim_samples / audio.SAMPLE_RATE:.2f}s")
+    return True
+
+
+def _process_interim_final(state, translation_queue: queue.Queue, asr_engine, segment, interim: dict) -> bool:
+    try:
+        asr_start = time.perf_counter()
+        result = asr_engine.transcribe(segment)
+        asr_ms = int(round((time.perf_counter() - asr_start) * 1000))
+    except Exception as e:
+        log("Error", f"Interim final ASR 识别出错: {e}")
+        return False
+
+    pending = str(interim.get("pending") or "")
+    if not result or not result.get("text"):
+        if pending:
+            interim["pending"] = ""
+            _handle_asr_result(state, translation_queue, {"text": pending, "language": "auto"}, 0)
+            return True
+        return False
+
+    text = str(result.get("text") or "").strip()
+    text = _strip_committed_overlap(text, str(interim.get("committed_tail") or ""))
+    if pending:
+        text = pending + text
+        interim["pending"] = ""
+    if not text or not any(c.isalnum() for c in text):
+        return False
+    _handle_asr_result(
+        state,
+        translation_queue,
+        {"text": text, "language": result.get("language", "auto")},
+        asr_ms,
+    )
+    return True
+
+
+def _reset_interim_state(interim: dict) -> None:
+    interim.update(
+        {
+            "active": False,
+            "pending": "",
+            "last_samples": 0,
+            "last_check": 0.0,
+            "committed_tail": "",
+        }
+    )
+
+
+def _flush_vad_with_silence(state, translation_queue: queue.Queue, asr_engine, vad, interim: dict) -> None:
+    if not getattr(vad, "_is_speaking", False):
+        return
+    silence = np.zeros(audio.CHUNK_SIZE, dtype=np.float32)
+    limit = vad._get_effective_silence_limit() + 1
+    for _ in range(limit):
+        seg = vad.process_chunk(silence)
+        if seg is None:
+            continue
+        if interim.get("active"):
+            _process_interim_final(state, translation_queue, asr_engine, seg, interim)
+        else:
+            _transcribe_segment(state, translation_queue, asr_engine, seg)
+        _reset_interim_state(interim)
+        break
+
+
 def run_worker_loop(state) -> None:
     """后台工作线程主循环。由 server 通过 socketio.start_background_task 启动。"""
     config = _config_snapshot(state)
@@ -362,6 +565,13 @@ def run_worker_loop(state) -> None:
     vad = _build_vad(config)
     proc_holder: dict = {"proc": None}
     last_emit = [0.0]
+    interim = {
+        "active": False,
+        "pending": "",
+        "last_samples": 0,
+        "last_check": 0.0,
+        "committed_tail": "",
+    }
     translation_queue: queue.Queue = queue.Queue(maxsize=_TRANSLATION_QUEUE_SIZE)
     subtitle_queue: queue.Queue = queue.Queue(maxsize=_SUBTITLE_QUEUE_SIZE)
     if state.socketio is not None:
@@ -395,6 +605,7 @@ def run_worker_loop(state) -> None:
             state.reload_event.clear()
             config = _config_snapshot(state)
             vad = _build_vad(config)
+            _reset_interim_state(interim)
             _unload_asr(asr_engine)
             try:
                 asr_engine = _build_asr(config, state.current_dir)
@@ -407,6 +618,7 @@ def run_worker_loop(state) -> None:
         if state.stream_reload_event.is_set():
             state.stream_reload_event.clear()
             config = _config_snapshot(state)
+            _reset_interim_state(interim)
             log("Core", "直播流配置已重载")
 
         try:
@@ -433,7 +645,14 @@ def run_worker_loop(state) -> None:
                     and not state.stream_reload_event.is_set()
                 ),
                 on_proc,
+                yield_idle=not _is_remote_realtime_asr(config),
             ):
+                if frame is None:
+                    _flush_vad_with_silence(
+                        state, translation_queue, asr_engine, vad, interim
+                    )
+                    continue
+
                 if _is_remote_realtime_asr(config):
                     try:
                         asr_start = time.perf_counter()
@@ -455,21 +674,37 @@ def run_worker_loop(state) -> None:
                     state.socketio.emit("vad_update", {"confidence": pct})
 
                 if seg is None:
+                    if (
+                        config.get("incremental_asr", False)
+                        and getattr(vad, "_is_speaking", False)
+                    ):
+                        buf_samples = getattr(vad, "_speech_samples", 0)
+                        total_dur = buf_samples / audio.SAMPLE_RATE
+                        elapsed = (buf_samples - int(interim.get("last_samples") or 0)) / audio.SAMPLE_RATE
+                        interval = max(1.0, float(config.get("interim_interval", 2.0)))
+                        now_perf = time.perf_counter()
+                        cooldown = now_perf - float(interim.get("last_check") or 0.0)
+                        if total_dur >= interval and elapsed >= interval and cooldown >= 1.0:
+                            interim["last_check"] = now_perf
+                            _do_interim_asr(
+                                state, translation_queue, asr_engine, vad, interim
+                            )
+                            interim["last_samples"] = getattr(vad, "_speech_samples", 0)
                     continue
 
-                try:
-                    asr_start = time.perf_counter()
-                    result = asr_engine.transcribe(seg)
-                    asr_ms = int(round((time.perf_counter() - asr_start) * 1000))
-                except Exception as e:
-                    log("Error", f"ASR 识别出错: {e}")
-                    continue
-                if not result or not result.get("text"):
-                    continue
-
-                _handle_asr_result(state, translation_queue, result, asr_ms)
+                if interim.get("active"):
+                    _process_interim_final(
+                        state, translation_queue, asr_engine, seg, interim
+                    )
+                else:
+                    _transcribe_segment(state, translation_queue, asr_engine, seg)
+                _reset_interim_state(interim)
         except Exception as e:
             log("Error", f"处理循环异常: {e}")
         finally:
+            if not _is_remote_realtime_asr(config):
+                _flush_vad_with_silence(
+                    state, translation_queue, asr_engine, vad, interim
+                )
             proc_holder["proc"] = None
             log("Core", "音频处理循环退出，等待重连...")

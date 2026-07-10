@@ -13,6 +13,7 @@ dependencies = [
     "modelscope",
     "numpy",
     "onnxruntime<1.24",
+    "pysbd>=0.3.4",
     "qrcode[pil]",
     "requests",
     "silero-vad",

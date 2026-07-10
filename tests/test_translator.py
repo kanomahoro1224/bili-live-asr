@@ -3,6 +3,7 @@
 from livetrans.translator import (
     OpenAICompatibleTranslator,
     build_prompt,
+    build_system_prompt,
     clean_translation_lines,
 )
 from livetrans.llm import LLMClient, LLMTimeoutError
@@ -10,22 +11,23 @@ from livetrans.llm import LLMClient, LLMTimeoutError
 
 def test_build_prompt_without_context():
     p = build_prompt(["こんにちは"], "", "杂谈", "")
-    assert "待翻译内容" in p
-    assert "前文对话上下文" not in p
-    assert "こんにちは" in p
+    assert "专业的影视字幕翻译专家" in p
+    assert "Japanese" in p
+    assert "Chinese" in p
 
 
 def test_build_prompt_with_context():
-    p = build_prompt(["A"], "原文: X\n译文: Y", "APEX", "保持语气")
-    assert "前文对话上下文" in p
+    p = build_system_prompt(
+        "Source: X\nTranslation: Y",
+        {"asr_language": "ja", "target_language": "zh", "prompt_extra": "保持语气"},
+    )
+    assert "近期对话上下文" in p
+    assert "Source: X" in p
     assert "保持语气" in p
-    assert "[APEX]" in p
 
 
 def test_build_prompt_uses_streamer_variables():
     p = build_prompt(["A"], "", "APEX", "", "歌手", "鹿乃")
-    assert "歌手" in p
-    assert "鹿乃" in p
     assert "Vtuber（鹿乃）" not in p
 
 
@@ -53,7 +55,7 @@ def test_translate_sends_thinking_mode(monkeypatch):
             calls.append({"timeout": timeout})
 
         def chat(self, messages, **params):
-            calls.append(params)
+            calls.append({"messages": messages, "params": params})
             return "你好"
 
     monkeypatch.setattr("livetrans.translator.LLMClient", Client)
@@ -61,11 +63,39 @@ def test_translate_sends_thinking_mode(monkeypatch):
 
     assert t.translate(["こんにちは"], {"llm_thinking_enabled": False}) == ["你好"]
     assert calls[0]["timeout"] == 30.0
-    assert calls[1]["thinking"] == {"type": "disabled"}
+    assert calls[1]["messages"][0]["role"] == "system"
+    assert calls[1]["messages"][1] == {"role": "user", "content": "こんにちは"}
+    assert calls[1]["params"]["thinking"] == {"type": "disabled"}
 
     assert t.translate(["こんにちは"], {"llm_thinking_enabled": True}) == ["你好"]
     assert calls[2]["timeout"] == 30.0
-    assert calls[3]["thinking"] == {"type": "enabled"}
+    assert calls[3]["params"]["thinking"] == {"type": "enabled"}
+
+
+def test_translate_injects_context_into_system_prompt(monkeypatch):
+    calls = []
+
+    class Client:
+        requires_api_key = False
+
+        def __init__(self, base_url, api_key, model, timeout):
+            pass
+
+        def chat(self, messages, **params):
+            calls.append(messages)
+            return "今天好冷"
+
+    monkeypatch.setattr("livetrans.translator.LLMClient", Client)
+    t = OpenAICompatibleTranslator()
+    t.context_buffer.append({"orig": "昨日は暑かった", "tran": "昨天很热"})
+
+    assert t.translate(["今日は寒い"], {"use_translation_context": True}) == ["今天好冷"]
+
+    system_prompt = calls[0][0]["content"]
+    assert calls[0][0]["role"] == "system"
+    assert "Source: 昨日は暑かった" in system_prompt
+    assert "Translation: 昨天很热" in system_prompt
+    assert calls[0][1] == {"role": "user", "content": "今日は寒い"}
 
 
 def test_translate_uses_configured_timeout_and_reraises_timeout(monkeypatch):
@@ -225,6 +255,6 @@ def test_context_window_trims_to_size():
     for i in range(10):
         t.context_buffer.append({"orig": f"o{i}", "tran": f"t{i}"})
     text = t._build_context_text(use_context=True, window=3)
-    # 只取最近 3 句 → 6 行（每句原文+译文）
-    assert text.count("\n") == 5
+    # 只取最近 3 句，每句按 LiveTranslate-main 的 Source/Translation 格式。
+    assert text.count("\n") == 7
     assert "o9" in text and "o7" in text and "o6" not in text

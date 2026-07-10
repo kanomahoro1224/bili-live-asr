@@ -7,13 +7,39 @@ import json
 from typing import Any
 
 from .llm import DEFAULT_LLM_BASE_URL, LLMClient, LLMError, LLMTimeoutError
-from .prompt_loader import render_prompt
+from .prompt_loader import load_prompt, render_prompt
 
 __all__ = [
     "build_prompt",
+    "build_system_prompt",
     "clean_translation_lines",
     "OpenAICompatibleTranslator",
 ]
+
+LANGUAGE_DISPLAY = {
+    "auto": "Japanese",
+    "en": "English",
+    "ja": "Japanese",
+    "zh": "Chinese",
+    "zh_cn": "Chinese",
+    "zh_tw": "Traditional Chinese",
+    "ko": "Korean",
+    "fr": "French",
+    "de": "German",
+    "es": "Spanish",
+    "ru": "Russian",
+    "pt": "Portuguese",
+    "it": "Italian",
+    "nl": "Dutch",
+    "pl": "Polish",
+    "tr": "Turkish",
+    "ar": "Arabic",
+    "th": "Thai",
+    "vi": "Vietnamese",
+    "id": "Indonesian",
+    "ms": "Malay",
+    "hi": "Hindi",
+}
 
 
 def build_prompt(
@@ -24,6 +50,7 @@ def build_prompt(
     streamer_type: str = "Vtuber",
     streamer_name: str = "鹿乃",
 ) -> str:
+    """Backward-compatible renderer for the editable translation prompt file."""
     input_text = "\n".join(texts)
     context_block = ""
     if context_text:
@@ -39,6 +66,43 @@ def build_prompt(
         prompt_extra=prompt_extra,
         context_block=context_block,
         input_text=input_text,
+        source_lang="Japanese",
+        target_lang="Chinese",
+        context=context_text,
+    )
+
+
+def _display_language(value: Any, default: str) -> str:
+    text = str(value or "").strip()
+    if not text:
+        return default
+    return LANGUAGE_DISPLAY.get(text.lower().replace("-", "_"), text)
+
+
+def build_system_prompt(
+    context_text: str,
+    config: dict[str, Any],
+) -> str:
+    source_lang = _display_language(
+        config.get("llm_source_lang")
+        or config.get("source_language")
+        or config.get("asr_language"),
+        "Japanese",
+    )
+    target_lang = _display_language(
+        config.get("llm_target_lang") or config.get("target_language"),
+        "Chinese",
+    )
+    prompt_extra = str(config.get("prompt_extra") or "").strip()
+    return render_prompt(
+        "translation.txt",
+        source_lang=source_lang,
+        target_lang=target_lang,
+        context=context_text,
+        prompt_extra=prompt_extra,
+        streamer_type=config.get("streamer_type") or "Vtuber",
+        streamer_name=config.get("streamer_name") or "鹿乃",
+        game_hint=config.get("game_hint") or "",
     )
 
 
@@ -103,9 +167,27 @@ class OpenAICompatibleTranslator:
         recent = list(self.context_buffer)[-window:]
         lines: list[str] = []
         for ctx in recent:
-            lines.append(f"原文: {ctx['orig']}")
-            lines.append(f"译文: {ctx['tran']}")
+            lines.append(f"Source: {ctx['orig']}")
+            lines.append(f"Translation: {ctx['tran']}")
+            lines.append("")
+        if lines and lines[-1] == "":
+            lines.pop()
         return "\n".join(lines)
+
+    def _build_messages(
+        self,
+        system_prompt: str,
+        text: str,
+        use_context: bool,
+        window: int,
+    ) -> list[dict[str, str]]:
+        messages = [{"role": "system", "content": system_prompt}]
+        if use_context and self.context_buffer and "{context}" not in load_prompt("translation.txt"):
+            for ctx in list(self.context_buffer)[-window:]:
+                messages.append({"role": "user", "content": ctx["orig"]})
+                messages.append({"role": "assistant", "content": ctx["tran"]})
+        messages.append({"role": "user", "content": text})
+        return messages
 
     def _build_client(
         self,
@@ -170,21 +252,16 @@ class OpenAICompatibleTranslator:
             return ["【未配置Key】"] * len(texts)
 
         use_context = config.get("use_translation_context", True)
-        window = config.get("context_window_size", 5)
+        window = config.get("context_window_size", 10)
         context_text = self._build_context_text(use_context, window)
-
-        prompt = build_prompt(
-            texts,
-            context_text,
-            config.get("game_hint", ""),
-            config.get("prompt_extra", ""),
-            config.get("streamer_type", "Vtuber"),
-            config.get("streamer_name", "鹿乃"),
-        )
+        system_prompt = build_system_prompt(context_text, config)
+        text = "\n".join(texts)
+        if len(texts) > 1:
+            text = "请逐行翻译，保持输入和输出行数一致：\n" + text
         try:
             thinking_type = "enabled" if config.get("llm_thinking_enabled") else "disabled"
             content = client.chat(
-                [{"role": "user", "content": prompt}],
+                self._build_messages(system_prompt, text, use_context, window),
                 temperature=0.3,
                 thinking={"type": thinking_type},
             )

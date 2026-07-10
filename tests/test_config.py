@@ -83,6 +83,8 @@ def test_save_is_atomic_and_roundtrips(tmp_path):
     assert loaded["asr"]["dashscope_api_key"] == DEFAULT_CONFIG["dashscope_api_key"]
     assert loaded["asr"]["remote_asr_model"] == DEFAULT_CONFIG["remote_asr_model"]
     assert loaded["asr"]["remote_realtime_asr_model"] == DEFAULT_CONFIG["remote_realtime_asr_model"]
+    assert loaded["asr"]["incremental_asr"] == DEFAULT_CONFIG["incremental_asr"]
+    assert loaded["asr"]["interim_interval"] == DEFAULT_CONFIG["interim_interval"]
     assert loaded["vad"]["vad_device"] == "cpu"
     assert loaded["vad"]["filter_games"] == DEFAULT_CONFIG["filter_games"]
     assert "vad" in loaded

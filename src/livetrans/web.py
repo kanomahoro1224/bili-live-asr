@@ -374,6 +374,8 @@ def _is_asr_reload_key(key: str) -> bool:
         "remote_realtime_asr_model",
         "remote_realtime_asr_url",
         "remote_realtime_asr_timeout",
+        "incremental_asr",
+        "interim_interval",
         "vad_threshold",
         "vad_device",
         "min_speech_duration",

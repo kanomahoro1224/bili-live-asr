@@ -2,6 +2,7 @@ import os
 import queue
 import threading
 
+import numpy as np
 import pytest
 
 from livetrans.state import AppState
@@ -102,6 +103,74 @@ def test_handle_asr_result_filters_and_enqueues(monkeypatch, tmp_path):
     assert q.get_nowait() == (["こんにちは"], 123.0, 5)
     pipeline._handle_asr_result(state, q, {"text": "BGM"}, asr_ms=5)
     assert q.empty()
+
+
+def test_split_sentences_uses_punctuation_and_comma_fallback():
+    assert pipeline._split_sentences("これはテストです。まだ途中", "ja") == [
+        "これはテストです。",
+        "まだ途中",
+    ]
+    long_text = "これはかなり長いテスト文章なので、ここで一度切ってほしいです"
+    assert pipeline._split_sentences(long_text, "ja") == [
+        "これはかなり長いテスト文章なので、",
+        "ここで一度切ってほしいです",
+    ]
+
+
+def test_do_interim_asr_commits_complete_sentence(monkeypatch, tmp_path):
+    class Vad:
+        def __init__(self):
+            self.trimmed = None
+
+        def peek_buffer(self):
+            return np.zeros(32000, dtype=np.float32), 2.0
+
+        def trim_front(self, samples):
+            self.trimmed = samples
+
+    class Engine:
+        def transcribe(self, audio):
+            return {
+                "text": "これはとても長いテスト文章です。まだ話している",
+                "language": "ja",
+            }
+
+    state = AppState({}, str(tmp_path / "c.json"), str(tmp_path))
+    q = queue.Queue()
+    vad = Vad()
+    interim = {"pending": "", "committed_tail": "", "active": False}
+
+    assert pipeline._do_interim_asr(state, q, Engine(), vad, interim)
+
+    texts, _, asr_ms = q.get_nowait()
+    assert texts == ["これはとても長いテスト文章です。"]
+    assert asr_ms >= 0
+    assert vad.trimmed is not None
+    assert interim["active"] is True
+    assert interim["committed_tail"] == "これはとても長いテスト文章です。"
+
+
+def test_flush_vad_with_silence_transcribes_pending_segment(tmp_path):
+    class Vad:
+        _is_speaking = True
+
+        def _get_effective_silence_limit(self):
+            return 0
+
+        def process_chunk(self, chunk):
+            return np.ones(512, dtype=np.float32)
+
+    class Engine:
+        def transcribe(self, audio):
+            return {"text": "最終セグメント", "language": "ja"}
+
+    state = AppState({}, str(tmp_path / "c.json"), str(tmp_path))
+    q = queue.Queue()
+    interim = {"active": False}
+
+    pipeline._flush_vad_with_silence(state, q, Engine(), Vad(), interim)
+
+    assert q.get_nowait()[0] == ["最終セグメント"]
 
 
 def test_build_asr_selects_remote_and_local(monkeypatch, tmp_path):

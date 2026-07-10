@@ -98,3 +98,43 @@ def test_stream_frames_reads_pcm_and_terminates(monkeypatch):
     assert seen["proc"].cmd[:5] == ["ffmpeg", "-y", "-loglevel", "quiet", "-i"]
     assert seen["proc"].terminated
     assert seen["on_proc"] is seen["proc"]
+
+
+def test_stream_frames_can_emit_idle_marker(monkeypatch):
+    class FakeStdout:
+        def read(self, size):
+            time.sleep(0.05)
+            return b""
+
+    class FakeProc:
+        def __init__(self, cmd, stdout, stderr, bufsize):
+            self.stdout = FakeStdout()
+            self.terminated = False
+
+        def poll(self):
+            return None
+
+        def terminate(self):
+            self.terminated = True
+
+        def wait(self, timeout=None):
+            return 0
+
+        def kill(self):
+            pass
+
+    def fake_popen(cmd, stdout, stderr, bufsize):
+        return FakeProc(cmd, stdout, stderr, bufsize)
+
+    monkeypatch.setattr(audio.subprocess, "Popen", fake_popen)
+
+    frames = audio.stream_frames(
+        "ffmpeg",
+        "http://stream",
+        lambda: True,
+        yield_idle=True,
+        idle_timeout=0.01,
+    )
+
+    assert next(frames) is None
+    frames.close()

@@ -24,7 +24,9 @@ def stream_frames(
     stream_url: str,
     should_run: Callable[[], bool],
     on_proc: Callable[[subprocess.Popen], None] | None = None,
-) -> Iterator[np.ndarray]:
+    yield_idle: bool = False,
+    idle_timeout: float = 0.2,
+) -> Iterator[np.ndarray | None]:
     """拉流并逐帧 yield float32 音频块（长度 CHUNK_SIZE，范围 [-1,1]）。
 
     should_run(): 返回 False 时停止读取并结束 ffmpeg。
@@ -63,8 +65,10 @@ def stream_frames(
     try:
         while should_run() and proc.poll() is None:
             try:
-                chunk = chunks.get(timeout=0.2)
+                chunk = chunks.get(timeout=idle_timeout)
             except queue.Empty:
+                if yield_idle:
+                    yield None
                 continue
             if chunk is None:
                 break

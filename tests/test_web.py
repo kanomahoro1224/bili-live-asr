@@ -56,6 +56,8 @@ def test_theme_subtitle_mode_and_settings_save(tmp_path, monkeypatch):
             "asr_language": "ja",
             "vad_threshold": "0.3",
             "tl_timeout": "12.5",
+            "incremental_asr": True,
+            "interim_interval": "2.5",
             "translation_model_type": "qwen_mt",
             "qwen_mt_base_url": "https://qwen.example/v1",
             "qwen_mt_api_key": "qwen-key",
@@ -74,11 +76,15 @@ def test_theme_subtitle_mode_and_settings_save(tmp_path, monkeypatch):
     assert resp.json == {"ok": True}
     assert state.config["vad_threshold"] == 0.3
     assert state.config["tl_timeout"] == 12.5
+    assert state.config["incremental_asr"] is True
+    assert state.config["interim_interval"] == 2.5
     assert state.config["translation_model_type"] == "qwen_mt"
     assert "unknown" not in state.config
     assert state.reload_event.is_set()
     loaded = json.loads(config_path.read_text(encoding="utf-8"))
     assert loaded["vad"]["vad_threshold"] == 0.3
+    assert loaded["asr"]["incremental_asr"] is True
+    assert loaded["asr"]["interim_interval"] == 2.5
     assert loaded["translation"]["tl_timeout"] == 12.5
     assert loaded["translation"]["translation_model_type"] == "qwen_mt"
     assert "qwen_mt_base_url" not in loaded["translation"]
@@ -155,5 +161,6 @@ def test_bili_logout_clears_cookie_files(tmp_path, monkeypatch):
 
 def test_is_asr_reload_key():
     assert _is_asr_reload_key("asr_language")
+    assert _is_asr_reload_key("incremental_asr")
     assert _is_asr_reload_key("vad_threshold")
     assert not _is_asr_reload_key("theme_color")

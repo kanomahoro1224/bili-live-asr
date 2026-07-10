@@ -47,6 +47,8 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "remote_realtime_asr_model": "qwen3-asr-flash-realtime",
     "remote_realtime_asr_url": "wss://dashscope.aliyuncs.com/api-ws/v1/realtime",
     "remote_realtime_asr_timeout": 8.0,
+    "incremental_asr": False,
+    "interim_interval": 2.0,
     # VAD & 过滤参数
     "vad_threshold": 0.5,                 # Silero 触发阈值
     "vad_device": "cpu",
@@ -87,7 +89,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "log_security_events": True,
     # 翻译上下文设置
     "use_translation_context": True,
-    "context_window_size": 5,
+    "context_window_size": 10,
     "max_context_buffer": 20,
 }
 
@@ -114,6 +116,8 @@ CONFIG_SECTIONS: tuple[tuple[str, tuple[str, ...]], ...] = (
             "remote_realtime_asr_model",
             "remote_realtime_asr_url",
             "remote_realtime_asr_timeout",
+            "incremental_asr",
+            "interim_interval",
         ),
     ),
     (
